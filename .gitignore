@@ -1,0 +1,29 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Local Credentials & Hardware Keys (Never commit your local bulb keys!)
+config.json
+devices.json
+devs.csv
+snapshot.json
+tuya-raw.json
+tinytuya.json
+
+# Virtual Environments
+.venv/
+venv/
+env/
+ENV/
+
+# IDE & OS
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.swp
+Thumbs.db
+[Dd]esktop.ini

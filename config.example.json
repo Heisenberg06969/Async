@@ -1,0 +1,21 @@
+{
+  "bulb": {
+    "ip": "192.168.1.100",
+    "device_id": "YOUR_TUYA_DEVICE_ID_HERE",
+    "local_key": "YOUR_16_CHAR_KEY",
+    "version": 3.3,
+    "port": 6668
+  },
+  "audio": {
+    "chunk_size": 1024,
+    "bands": 28,
+    "gravity": 0.82,
+    "min_freq": 25.0,
+    "max_freq": 16000.0
+  },
+  "visuals": {
+    "mode": "bass_pulse",
+    "bass_decay": 0.82,
+    "min_brightness": 20.0
+  }
+}

@@ -1,0 +1,1635 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Async: Room Light Emulator & Algorithm Lab</title>
+  <style>
+    :root {
+      --bulb-r: 132;
+      --bulb-g: 209;
+      --bulb-b: 10;
+      --bulb-bright: 0.82;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      user-select: none;
+    }
+
+    /* Entire screen is a 100% edge-to-edge solid bright light source */
+    body, html {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background-color: rgb(var(--bulb-r), var(--bulb-g), var(--bulb-b));
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+      color: #ffffff;
+      transition: background-color 0.035s linear;
+    }
+
+    #light-flood {
+      position: absolute;
+      inset: 0;
+      background: radial-gradient(
+        circle at 50% 30%,
+        rgba(255, 255, 255, 0.12) 0%,
+        rgba(0, 0, 0, 0.0) 75%
+      );
+      pointer-events: none;
+    }
+
+    /* Main Container */
+    #app-container {
+      position: relative;
+      width: 100%;
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      align-items: center;
+      padding: 20px 24px;
+      z-index: 10;
+      transition: opacity 0.25s ease;
+    }
+
+    body.clean-mode #app-container {
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    /* Header */
+    header {
+      width: 100%;
+      max-width: 960px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      backdrop-filter: blur(20px);
+      background: rgba(0, 0, 0, 0.65);
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      padding: 12px 22px;
+      border-radius: 16px;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      font-weight: 700;
+      font-size: 1.15rem;
+      letter-spacing: 0.5px;
+    }
+
+    .badge-live {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      padding: 4px 12px;
+      border-radius: 20px;
+      background: rgba(255, 255, 255, 0.15);
+      color: #ffffff;
+      border: 1px solid rgba(255, 255, 255, 0.3);
+      font-weight: 600;
+    }
+
+    .pulse-dot {
+      width: 8px;
+      height: 8px;
+      background: #4ade80;
+      border-radius: 50%;
+      box-shadow: 0 0 10px #4ade80;
+      animation: pulse-ring 1.4s infinite;
+    }
+
+    @keyframes pulse-ring {
+      0% { transform: scale(0.9); opacity: 0.7; }
+      50% { transform: scale(1.3); opacity: 1; }
+      100% { transform: scale(0.9); opacity: 0.7; }
+    }
+
+    .stats {
+      display: flex;
+      gap: 20px;
+      font-size: 0.88rem;
+      color: #e5e7eb;
+      font-variant-numeric: tabular-nums;
+      font-weight: 500;
+    }
+
+    .stats b {
+      color: #ffffff;
+      font-weight: 700;
+    }
+
+    /* Center Stage: Audio-Reactive Cover Visualizer */
+    #center-stage {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      flex: 1;
+      width: 100%;
+      pointer-events: none;
+      position: relative;
+    }
+
+    .visualizer-cover-frame {
+      position: relative;
+      width: 220px;
+      height: 220px;
+      border-radius: 28px;
+      overflow: hidden;
+      background: #0d1017;
+      border: 1px solid rgba(255, 255, 255, 0.22);
+      box-shadow: 0 24px 60px rgba(0, 0, 0, 0.65);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      will-change: transform, box-shadow;
+      transform-origin: center center;
+    }
+
+    .visualizer-cover-img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
+      border-radius: 27px;
+    }
+
+    .visualizer-cover-placeholder {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 100%;
+      height: 100%;
+      background: radial-gradient(circle at center, #1e2430 0%, #0d1015 100%);
+      color: rgba(255, 255, 255, 0.28);
+    }
+
+    /* Lower Controls Panel: Media Player Row */
+    .player-control-row {
+      padding-bottom: 8px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+      margin-bottom: 4px;
+    }
+
+    .player-buttons-group {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .player-track-summary {
+      display: flex;
+      align-items: baseline;
+      gap: 8px;
+      min-width: 0;
+      max-width: 320px;
+      overflow: hidden;
+      white-space: nowrap;
+    }
+
+    .player-title {
+      font-size: 0.88rem;
+      font-weight: 700;
+      color: #ffffff;
+      text-overflow: ellipsis;
+      overflow: hidden;
+      white-space: nowrap;
+    }
+
+    .player-artist {
+      font-size: 0.78rem;
+      font-weight: 500;
+      color: #9ca3af;
+      text-overflow: ellipsis;
+      overflow: hidden;
+      white-space: nowrap;
+    }
+
+    .player-timeline-group {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex: 1;
+      max-width: 360px;
+      margin-left: auto;
+    }
+
+    .media-btn {
+      background: rgba(255, 255, 255, 0.1);
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      color: #ffffff;
+      width: 30px;
+      height: 30px;
+      border-radius: 50%;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      transition: all 0.15s ease;
+      outline: none;
+    }
+
+    .media-btn:hover {
+      background: rgba(255, 255, 255, 0.25);
+      transform: scale(1.08);
+    }
+
+    .media-btn:active {
+      transform: scale(0.92);
+    }
+
+    .media-btn-play {
+      width: 34px;
+      height: 34px;
+      background: #ffffff;
+      color: #0f1117;
+      border: none;
+      box-shadow: 0 4px 12px rgba(255, 255, 255, 0.3);
+    }
+
+    .media-btn-play:hover {
+      background: #f3f4f6;
+      transform: scale(1.10);
+      box-shadow: 0 6px 18px rgba(255, 255, 255, 0.45);
+    }
+
+    .media-btn-play:active {
+      transform: scale(0.94);
+    }
+
+    .media-time {
+      font-size: 0.70rem;
+      font-weight: 600;
+      color: #9ca3af;
+      font-variant-numeric: tabular-nums;
+      min-width: 28px;
+    }
+
+    .media-progress-track {
+      flex: 1;
+      height: 4px;
+      background: rgba(255, 255, 255, 0.18);
+      border-radius: 4px;
+      overflow: hidden;
+      position: relative;
+    }
+
+    .media-progress-fill {
+      height: 100%;
+      background: #ffffff;
+      border-radius: 4px;
+      transition: width 0.3s linear;
+      box-shadow: 0 0 6px rgba(255, 255, 255, 0.6);
+    }
+
+    .media-app-badge {
+      font-size: 0.65rem;
+      font-weight: 800;
+      letter-spacing: 0.8px;
+      padding: 2px 7px;
+      border-radius: 6px;
+      background: rgba(255, 255, 255, 0.1);
+      color: #cbd5e1;
+      text-transform: uppercase;
+      white-space: nowrap;
+      border: 1px solid rgba(255, 255, 255, 0.12);
+    }
+
+
+    /* Canvas Equalizer */
+    #visualizer-deck {
+      width: 100%;
+      max-width: 960px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 14px;
+    }
+
+    canvas#eq-canvas {
+      width: 100%;
+      height: 120px;
+      filter: drop-shadow(0 6px 20px rgba(0, 0, 0, 0.5));
+    }
+
+    /* Controls Panel */
+    .controls-panel {
+      width: 100%;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      backdrop-filter: blur(20px);
+      background: rgba(0, 0, 0, 0.70);
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      padding: 14px 20px;
+      border-radius: 18px;
+      box-shadow: 0 10px 40px rgba(0, 0, 0, 0.45);
+    }
+
+    .control-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      width: 100%;
+      gap: 12px;
+    }
+
+    .row-group {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .row-label {
+      font-size: 0.74rem;
+      font-weight: 800;
+      letter-spacing: 1.5px;
+      color: #9ca3af;
+      min-width: 70px;
+    }
+
+    .pills-container {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .pill-btn {
+      background: rgba(255, 255, 255, 0.08);
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      color: #d1d5db;
+      padding: 6px 14px;
+      border-radius: 9px;
+      font-size: 0.82rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.15s ease;
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+    }
+
+    .pill-btn:hover {
+      background: rgba(255, 255, 255, 0.22);
+      color: #ffffff;
+    }
+
+    .pill-btn.active {
+      background: #ffffff;
+      border-color: #ffffff;
+      color: #111827;
+      font-weight: 800;
+      box-shadow: 0 0 16px rgba(255, 255, 255, 0.6);
+    }
+
+    .algo-diagnostic-badge {
+      font-size: 0.82rem;
+      font-weight: 700;
+      padding: 5px 14px;
+      border-radius: 12px;
+      background: rgba(255, 255, 255, 0.12);
+      border: 1px solid rgba(255, 255, 255, 0.25);
+      color: #ffffff;
+      letter-spacing: 0.5px;
+      white-space: nowrap;
+    }
+
+    .source-device-container {
+      position: relative;
+    }
+
+    .source-device-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 0.80rem;
+      font-weight: 600;
+      padding: 5px 12px;
+      border-radius: 12px;
+      background: rgba(255, 255, 255, 0.10);
+      border: 1px solid rgba(255, 255, 255, 0.20);
+      color: #93c5fd;
+      letter-spacing: 0.3px;
+      cursor: pointer;
+      transition: all 0.18s ease;
+      outline: none;
+      max-width: 320px;
+    }
+
+    .source-device-btn:hover {
+      background: rgba(255, 255, 255, 0.18);
+      border-color: rgba(147, 197, 253, 0.5);
+      color: #bfdbfe;
+    }
+
+    .device-btn-icon {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+
+    .device-btn-name {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .device-chevron {
+      opacity: 0.65;
+      transition: transform 0.2s ease;
+      flex-shrink: 0;
+    }
+
+    .source-device-container.open .device-chevron {
+      transform: rotate(180deg);
+    }
+
+    /* Windows 11 Fluent Sound Output Flyout */
+    .sound-output-flyout {
+      position: absolute;
+      bottom: calc(100% + 10px);
+      right: 0;
+      width: 330px;
+      background: rgba(24, 28, 38, 0.95);
+      backdrop-filter: blur(28px);
+      -webkit-backdrop-filter: blur(28px);
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      border-radius: 14px;
+      box-shadow: 0 20px 50px rgba(0, 0, 0, 0.8), 0 0 1px rgba(255, 255, 255, 0.25);
+      padding: 10px 8px 12px 8px;
+      z-index: 100;
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+      opacity: 0;
+      transform: translateY(8px) scale(0.97);
+      pointer-events: none;
+      transition: opacity 0.18s cubic-bezier(0.16, 1, 0.3, 1), transform 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    .source-device-container.open .sound-output-flyout {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+      pointer-events: auto;
+    }
+
+    .flyout-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 4px 8px 8px 8px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+      margin-bottom: 2px;
+    }
+
+    .flyout-header-title {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 0.86rem;
+      font-weight: 700;
+      color: #f3f4f6;
+      letter-spacing: 0.2px;
+    }
+
+    .flyout-close-btn {
+      background: transparent;
+      border: none;
+      color: #9ca3af;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 4px;
+      border-radius: 6px;
+      transition: all 0.15s ease;
+    }
+
+    .flyout-close-btn:hover {
+      background: rgba(255, 255, 255, 0.12);
+      color: #ffffff;
+    }
+
+    .flyout-section-title {
+      font-size: 0.70rem;
+      font-weight: 700;
+      color: #9ca3af;
+      letter-spacing: 0.8px;
+      text-transform: uppercase;
+      padding: 4px 8px 2px 8px;
+    }
+
+    .flyout-device-list {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      max-height: 240px;
+      overflow-y: auto;
+    }
+
+    .flyout-device-list::-webkit-scrollbar {
+      width: 4px;
+    }
+
+    .flyout-device-list::-webkit-scrollbar-thumb {
+      background: rgba(255, 255, 255, 0.2);
+      border-radius: 4px;
+    }
+
+    .flyout-device-item {
+      position: relative;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 9px 12px 9px 16px;
+      border-radius: 8px;
+      cursor: pointer;
+      background: transparent;
+      border: 1px solid transparent;
+      color: #e5e7eb;
+      font-size: 0.82rem;
+      font-weight: 500;
+      text-align: left;
+      width: 100%;
+      outline: none;
+      transition: all 0.15s ease;
+    }
+
+    .flyout-device-item:hover {
+      background: rgba(255, 255, 255, 0.08);
+      color: #ffffff;
+    }
+
+    .flyout-device-item.active {
+      background: rgba(255, 255, 255, 0.12);
+      color: #ffffff;
+      font-weight: 700;
+    }
+
+    /* Windows 11 Cyan Accent Bar on Left */
+    .flyout-device-item.active::before {
+      content: "";
+      position: absolute;
+      left: 3px;
+      top: 7px;
+      bottom: 7px;
+      width: 3px;
+      border-radius: 2px;
+      background: #38bdf8;
+      box-shadow: 0 0 8px #38bdf8;
+    }
+
+    .flyout-device-icon {
+      flex-shrink: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #9ca3af;
+      transition: color 0.15s ease;
+    }
+
+    .flyout-device-item:hover .flyout-device-icon,
+    .flyout-device-item.active .flyout-device-icon {
+      color: #38bdf8;
+    }
+
+    .flyout-device-label {
+      flex: 1;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .action-tools {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .action-btn {
+      background: rgba(255, 255, 255, 0.12);
+      border: 1px solid rgba(255, 255, 255, 0.25);
+      color: #ffffff;
+      padding: 6px 14px;
+      border-radius: 9px;
+      font-size: 0.82rem;
+      font-weight: 600;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      transition: background 0.15s;
+    }
+
+    .action-btn:hover {
+      background: rgba(255, 255, 255, 0.28);
+    }
+
+    /* Ambilight Screen Sync Controller Button */
+    .ambilight-toggle-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      padding: 6px 14px;
+      border-radius: 20px;
+      font-size: 0.80rem;
+      font-weight: 700;
+      cursor: pointer;
+      background: rgba(56, 189, 248, 0.12);
+      border: 1px solid rgba(56, 189, 248, 0.35);
+      color: #7dd3fc;
+      transition: all 0.2s ease;
+      letter-spacing: 0.4px;
+      outline: none;
+    }
+
+    .ambilight-toggle-btn:hover {
+      background: rgba(56, 189, 248, 0.22);
+      border-color: rgba(56, 189, 248, 0.6);
+      color: #ffffff;
+      transform: translateY(-1px);
+    }
+
+    .ambilight-toggle-btn:active {
+      transform: scale(0.95);
+    }
+
+    .ambilight-toggle-btn.active {
+      background: #0284c7;
+      border-color: #38bdf8;
+      color: #ffffff;
+      box-shadow: 0 0 18px rgba(56, 189, 248, 0.75), inset 0 1px 1px rgba(255, 255, 255, 0.4);
+    }
+
+    .ambilight-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: #64748b;
+      transition: all 0.2s ease;
+    }
+
+    .ambilight-toggle-btn.active .ambilight-dot {
+      background: #38bdf8;
+      box-shadow: 0 0 8px #38bdf8, 0 0 12px #ffffff;
+      animation: pulse-ring 1.2s infinite;
+    }
+
+    /* Bass Flash Controller Styles */
+    .flash-toggle-btn {
+      background: rgba(239, 68, 68, 0.18);
+      border: 1px solid rgba(239, 68, 68, 0.45);
+      color: #fca5a5;
+      font-weight: 700;
+    }
+
+    .flash-toggle-btn.active {
+      background: #ef4444;
+      border-color: #f87171;
+      color: #ffffff;
+      box-shadow: 0 0 16px rgba(239, 68, 68, 0.7);
+    }
+
+    .flash-controls-group {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      flex-wrap: wrap;
+    }
+
+    .slider-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 0.76rem;
+      color: #d1d5db;
+      font-weight: 600;
+      white-space: nowrap;
+    }
+
+    .slider-item span b {
+      color: #ffffff;
+      font-variant-numeric: tabular-nums;
+      display: inline-block;
+      min-width: 36px;
+    }
+
+    .slider-item input[type="range"] {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 76px;
+      height: 5px;
+      background: rgba(255, 255, 255, 0.22);
+      border-radius: 4px;
+      outline: none;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+
+    .slider-item input[type="range"]:hover {
+      background: rgba(255, 255, 255, 0.38);
+    }
+
+    .slider-item input[type="range"]::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 13px;
+      height: 13px;
+      border-radius: 50%;
+      background: #ffffff;
+      cursor: pointer;
+      box-shadow: 0 0 8px rgba(0, 0, 0, 0.6);
+      transition: transform 0.1s ease;
+    }
+
+    .slider-item input[type="range"]::-webkit-slider-thumb:hover {
+      transform: scale(1.25);
+    }
+
+    .btn-test-flash {
+      background: rgba(239, 68, 68, 0.18);
+      border: 1px solid rgba(239, 68, 68, 0.4);
+      color: #fca5a5;
+    }
+
+    .btn-test-flash:hover {
+      background: rgba(239, 68, 68, 0.4);
+      color: #ffffff;
+    }
+
+    .btn-test-flash:active, .btn-test-flash.active {
+      transform: scale(0.95);
+      background: #ef4444;
+      color: #ffffff;
+      box-shadow: 0 0 18px rgba(239, 68, 68, 0.85);
+    }
+
+    /* Hint toast */
+    .hint-toast {
+      position: absolute;
+      top: 88px;
+      padding: 8px 18px;
+      background: rgba(0, 0, 0, 0.7);
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      border-radius: 20px;
+      font-size: 0.8rem;
+      color: #ffffff;
+      font-weight: 500;
+      pointer-events: none;
+      backdrop-filter: blur(12px);
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+      animation: fadeOut 7s forwards;
+    }
+
+    @keyframes fadeOut {
+      0% { opacity: 1; }
+      75% { opacity: 1; }
+      100% { opacity: 0; }
+    }
+  </style>
+</head>
+<body>
+  <div id="light-flood"></div>
+
+  <div class="hint-toast">Press [Space] Pure Light | [5] Toggle Ambilight | [1-4] Audio Modes | [B] Bass Flash | [T] Test Flash | [S] Source | [A] Algo | [F] Fullscreen</div>
+
+  <div id="app-container">
+    <header>
+      <div class="brand">
+        <span class="brand-text">Async</span>
+        <span class="badge-live" id="badge-bulb-status"><span class="pulse-dot" id="bulb-pulse-dot"></span> <span id="bulb-status-text">Room Light (Live)</span></span>
+      </div>
+      <div class="stats">
+        <span>Color: <b id="stat-rgb">RGB(132, 209, 10)</b></span>
+        <span>Hue: <b id="stat-hue">83°</b></span>
+        <span>Brightness: <b id="stat-val">82%</b></span>
+      </div>
+    </header>
+
+    <!-- Center Stage: Audio-Reactive Album Cover Visualizer -->
+    <div id="center-stage">
+      <div class="visualizer-cover-frame" id="visualizer-cover-frame">
+        <img id="media-cover" class="visualizer-cover-img" src="" alt="Album Art" style="display: none;">
+        <div id="media-cover-placeholder" class="visualizer-cover-placeholder">
+          <svg viewBox="0 0 24 24" width="56" height="56" fill="currentColor">
+            <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 14.5c-2.49 0-4.5-2.01-4.5-4.5S9.51 7.5 12 7.5s4.5 2.01 4.5 4.5-2.01 4.5-4.5 4.5zm0-5.5c-.55 0-1 .45-1 1s.45 1 1 1 1-.45 1-1-.45-1-1-1z"/>
+          </svg>
+        </div>
+      </div>
+    </div>
+
+    <div id="visualizer-deck">
+      <canvas id="eq-canvas" width="960" height="120"></canvas>
+
+      <div class="controls-panel">
+        <!-- Row 0: Media Player Controller -->
+        <div class="control-row player-control-row">
+          <div class="row-group">
+            <span class="row-label">PLAYER</span>
+            <div class="player-buttons-group">
+              <button class="media-btn" id="btn-media-prev" title="Previous Track" aria-label="Previous Track">
+                <svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor">
+                  <path d="M6 6h2v12H6zm3.5 6l8.5 6V6z"/>
+                </svg>
+              </button>
+              <button class="media-btn media-btn-play" id="btn-media-play" title="Play / Pause" aria-label="Play or Pause">
+                <svg id="icon-play" viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
+                  <path d="M8 5v14l11-7z"/>
+                </svg>
+                <svg id="icon-pause" viewBox="0 0 24 24" width="18" height="18" fill="currentColor" style="display: none;">
+                  <path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/>
+                </svg>
+              </button>
+              <button class="media-btn" id="btn-media-next" title="Next Track" aria-label="Next Track">
+                <svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor">
+                  <path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z"/>
+                </svg>
+              </button>
+            </div>
+            <div class="player-track-summary">
+              <span class="player-title" id="media-title">No Media Playing</span>
+              <span class="player-artist" id="media-artist">Waiting for Windows audio...</span>
+            </div>
+          </div>
+          <div class="player-timeline-group">
+            <span class="media-time" id="media-time-cur">0:00</span>
+            <div class="media-progress-track">
+              <div class="media-progress-fill" id="media-progress-fill" style="width: 0%;"></div>
+            </div>
+            <span class="media-time" id="media-time-dur">0:00</span>
+            <div class="media-app-badge" id="media-app-badge">DESKTOP</div>
+          </div>
+        </div>
+
+        <!-- Row 1: Audio Input Source -->
+        <div class="control-row">
+          <div class="row-group">
+            <span class="row-label">INPUT</span>
+            <div class="pills-container">
+              <button class="pill-btn source-btn active" data-source="speaker">Speaker (Desktop)</button>
+              <button class="pill-btn source-btn" data-source="mic">Microphone (Live)</button>
+            </div>
+          </div>
+          <div class="source-device-container" id="source-device-container">
+            <button class="source-device-btn" id="btn-device-trigger" title="Select Audio Output Device">
+              <span class="device-btn-icon" id="device-btn-icon">
+                <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor">
+                  <path d="M17 2H7c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h10c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm-5 2c1.1 0 2 .9 2 2s-.9 2-2 2-2-.9-2-2 .9-2 2-2zm0 16c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"/>
+                </svg>
+              </span>
+              <span class="device-btn-name" id="source-badge">Desktop Audio</span>
+              <svg class="device-chevron" viewBox="0 0 24 24" width="12" height="12" fill="currentColor">
+                <path d="M7 10l5 5 5-5z"/>
+              </svg>
+            </button>
+
+            <!-- Windows 11 Fluent Sound Output Flyout Menu -->
+            <div class="sound-output-flyout" id="sound-output-flyout">
+              <div class="flyout-header">
+                <div class="flyout-header-title">
+                  <svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor">
+                    <path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/>
+                  </svg>
+                  <span>Sound output</span>
+                </div>
+                <button class="flyout-close-btn" id="btn-close-flyout" aria-label="Close">
+                  <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor">
+                    <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/>
+                  </svg>
+                </button>
+              </div>
+              <div class="flyout-section-title">Output device</div>
+              <div class="flyout-device-list" id="flyout-device-list">
+                <!-- Dynamically populated via WebSocket -->
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Row 2: Decision Algorithms -->
+        <div class="control-row">
+          <div class="row-group">
+            <span class="row-label">ALGORITHM</span>
+            <div class="pills-container">
+              <button class="pill-btn algo-btn active" data-algo="harmonic_flow">Harmonic Flow</button>
+              <button class="pill-btn algo-btn" data-algo="spectral_centroid">Timbre Warmth</button>
+              <button class="pill-btn algo-btn" data-algo="chroma_pitch">Chroma Pitch</button>
+              <button class="pill-btn algo-btn" data-algo="rgb_projection">RGB Physics</button>
+            </div>
+          </div>
+          <div class="algo-diagnostic-badge" id="algo-badge">Melody Flow</div>
+        </div>
+
+        <!-- Row 3: Bass Flash Controller -->
+        <div class="control-row">
+          <div class="row-group">
+            <span class="row-label">BASS FLASH</span>
+            <button class="pill-btn flash-toggle-btn active" id="btn-flash-toggle">
+              <span id="flash-toggle-text">FLASH ON</span>
+            </button>
+            <div class="pills-container" id="flash-style-pills">
+              <button class="pill-btn flash-style-btn active" data-style="white_flare">White Flare</button>
+              <button class="pill-btn flash-style-btn" data-style="color_burst">Color Burst</button>
+              <button class="pill-btn flash-style-btn" data-style="invert_strobe">Invert Strobe</button>
+            </div>
+          </div>
+          <div class="flash-controls-group">
+            <div class="slider-item">
+              <span>Intensity: <b id="val-intensity">100%</b></span>
+              <input type="range" id="slider-intensity" min="0.2" max="1.5" step="0.05" value="1.0">
+            </div>
+            <div class="slider-item">
+              <span>Sensitivity: <b id="val-threshold">Normal</b></span>
+              <input type="range" id="slider-threshold" min="0.18" max="0.65" step="0.02" value="0.38">
+            </div>
+            <button class="action-btn btn-test-flash" id="btn-test-flash">Test Flash [T]</button>
+          </div>
+        </div>
+
+        <!-- Row 4: Lighting FX Profiles & Ambilight Controller -->
+        <div class="control-row">
+          <div class="row-group">
+            <span class="row-label">LIGHT FX</span>
+            <div class="pills-container">
+              <button class="pill-btn mode-btn active" data-mode="bass_pulse">Beat Flare</button>
+              <button class="pill-btn mode-btn" data-mode="rainbow_wave">Rainbow Wave</button>
+              <button class="pill-btn mode-btn" data-mode="ambient_chill">Ambient Chill</button>
+              <button class="pill-btn mode-btn" data-mode="rave_strobe">Rave Strobe</button>
+            </div>
+            <button class="pill-btn ambilight-toggle-btn" id="btn-ambilight-toggle" title="Toggle Ambilight Screen Sync [5]">
+              <span class="ambilight-dot"></span>
+              <span id="ambilight-toggle-text">AMBILIGHT OFF</span>
+            </button>
+          </div>
+          <div class="action-tools">
+            <button class="action-btn" id="btn-clean">Light Only [Space]</button>
+            <button class="action-btn" id="btn-fullscreen">Fullscreen [F]</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const canvas = document.getElementById("eq-canvas");
+    const ctx = canvas.getContext("2d");
+
+    let currentRGB = [132, 209, 10];
+    let currentHSV = [83.0, 95.0, 82.0];
+    let currentBands = new Array(28).fill(0);
+    let currentMode = "bass_pulse";
+    let currentAlgo = "harmonic_flow";
+    let currentSource = "speaker";
+    let latestMetrics = {};
+    let isKick = false;
+
+    // Bulb Hardware Connectivity & Telemetry
+    const bulbPulseDot = document.getElementById("bulb-pulse-dot");
+    const bulbStatusText = document.getElementById("bulb-status-text");
+
+    function updateBulbStatus(bulb) {
+      if (!bulb || !bulbStatusText || !bulbPulseDot) return;
+      if (bulb.connected) {
+        bulbPulseDot.style.background = "#4ade80";
+        bulbPulseDot.style.boxShadow = "0 0 10px #4ade80";
+        const ping = Math.max(1, Math.round(bulb.ping_ms || 15));
+        bulbStatusText.textContent = `Room Light (${ping}ms)`;
+      } else {
+        bulbPulseDot.style.background = "#f87171";
+        bulbPulseDot.style.boxShadow = "0 0 10px #f87171";
+        bulbStatusText.textContent = "Reconnecting...";
+      }
+    }
+
+    // WebSocket Connection
+    let ws = null;
+    function connectWS() {
+      const wsUrl = `ws://${window.location.host}/ws`;
+      ws = new WebSocket(wsUrl);
+
+      ws.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          if (data.rgb) currentRGB = data.rgb;
+          if (data.hsv) currentHSV = data.hsv;
+          if (data.bands) currentBands = data.bands;
+          if (data.mode) setModeActive(data.mode);
+          if (data.bulb) updateBulbStatus(data.bulb);
+          if (data.ambilight_enabled !== undefined) updateAmbilightUI(data.ambilight_enabled);
+          if (data.algorithm) setAlgoActive(data.algorithm);
+          if (data.source) setSourceActive(data.source);
+          if (data.speaker_devices) updateSpeakerDevices(data.speaker_devices);
+          if (data.source_name) updateSourceBadge(data.source, data.source_name);
+          if (data.bass_flash) updateBassFlashUI(data.bass_flash);
+          if (data.media) updateMediaUI(data.media);
+          if (data.metrics) {
+            latestMetrics = data.metrics;
+            isKick = data.metrics.is_kick;
+            updateAlgoBadge();
+          }
+        } catch (e) {}
+      };
+
+      ws.onclose = () => {
+        setTimeout(connectWS, 1000);
+      };
+    }
+    connectWS();
+
+    function sendCommand(cmd) {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify(cmd));
+      }
+    }
+
+    // Audio Source Buttons, Device Trigger & Windows 11 Flyout
+    const sourceBtns = document.querySelectorAll(".source-btn");
+    const sourceBadge = document.getElementById("source-badge");
+    const deviceBtnIcon = document.getElementById("device-btn-icon");
+    const sourceDeviceContainer = document.getElementById("source-device-container");
+    const btnDeviceTrigger = document.getElementById("btn-device-trigger");
+    const btnCloseFlyout = document.getElementById("btn-close-flyout");
+    const flyoutDeviceList = document.getElementById("flyout-device-list");
+
+    let speakerDevices = [];
+    let currentDeviceName = "";
+
+    const SVG_ICONS = {
+      display: `<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M21 3H3c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h7l-2 3v1h8v-1l-2-3h7c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 14H3V5h18v12z"/></svg>`,
+      speaker: `<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M17 2H7c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h10c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm-5 2c1.1 0 2 .9 2 2s-.9 2-2 2-2-.9-2-2 .9-2 2-2zm0 16c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"/></svg>`,
+      headphone: `<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M12 3c-4.97 0-9 4.03-9 9v7c0 1.66 1.34 3 3 3h3v-8H5v-2c0-3.87 3.13-7 7-7s7 3.13 7 7v2h-4v8h3c1.66 0 3-1.34 3-3v-7c0-4.97-4.03-9-9-9z"/></svg>`,
+      mic: `<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zm5.3-3c0 3-2.54 5.1-5.3 5.1S6.7 14 6.7 11H5c0 3.41 2.72 6.23 6 6.72V21h2v-3.28c3.28-.48 6-3.3 6-6.72h-1.7z"/></svg>`
+    };
+
+    function getDeviceIconType(name) {
+      const lower = (name || "").toLowerCase();
+      if (lower.includes("headphone") || lower.includes("headset") || lower.includes("earphone")) return "headphone";
+      if (lower.includes("fhd") || lower.includes("display") || lower.includes("monitor") || lower.includes("nvidia") || lower.includes("tv") || lower.includes("hdmi")) return "display";
+      return "speaker";
+    }
+
+    function setSourceActive(source) {
+      currentSource = source;
+      sourceBtns.forEach(btn => {
+        if (btn.dataset.source === source) {
+          btn.classList.add("active");
+        } else {
+          btn.classList.remove("active");
+        }
+      });
+      if (source === "mic") {
+        sourceDeviceContainer.classList.remove("open");
+      }
+    }
+
+    function updateSourceBadge(source, deviceName) {
+      currentDeviceName = deviceName || "";
+      if (source === "mic") {
+        sourceBadge.textContent = deviceName || "Microphone (Live)";
+        deviceBtnIcon.innerHTML = SVG_ICONS.mic;
+        btnDeviceTrigger.style.color = "#f472b6";
+        btnDeviceTrigger.style.borderColor = "rgba(244, 114, 182, 0.4)";
+      } else {
+        sourceBadge.textContent = deviceName || "Desktop Audio";
+        const iconType = getDeviceIconType(deviceName);
+        deviceBtnIcon.innerHTML = SVG_ICONS[iconType] || SVG_ICONS.speaker;
+        btnDeviceTrigger.style.color = "#93c5fd";
+        btnDeviceTrigger.style.borderColor = "rgba(147, 197, 253, 0.4)";
+      }
+      renderFlyoutDevices();
+    }
+
+    function updateSpeakerDevices(devices) {
+      if (!Array.isArray(devices)) return;
+      speakerDevices = devices;
+      renderFlyoutDevices();
+    }
+
+    function renderFlyoutDevices() {
+      if (!flyoutDeviceList) return;
+      flyoutDeviceList.innerHTML = "";
+
+      if (speakerDevices.length === 0) {
+        flyoutDeviceList.innerHTML = `<div style="padding: 10px; color: #9ca3af; font-size: 0.8rem; text-align: center;">Scanning Windows audio devices...</div>`;
+        return;
+      }
+
+      speakerDevices.forEach(dev => {
+        const item = document.createElement("button");
+        item.className = "flyout-device-item";
+        
+        const isActive = (currentSource === "speaker") && (
+          dev.is_active || 
+          (currentDeviceName && dev.name.toLowerCase() === currentDeviceName.toLowerCase()) ||
+          (currentDeviceName && (currentDeviceName.startsWith(dev.name) || dev.name.startsWith(currentDeviceName)))
+        );
+
+        if (isActive) item.classList.add("active");
+
+        const iconType = dev.type || getDeviceIconType(dev.name);
+        const iconSvg = SVG_ICONS[iconType] || SVG_ICONS.speaker;
+
+        item.innerHTML = `
+          <span class="flyout-device-icon">${iconSvg}</span>
+          <span class="flyout-device-label" title="${dev.name}">${dev.name}</span>
+        `;
+
+        item.addEventListener("click", () => {
+          setSourceActive("speaker");
+          currentDeviceName = dev.name;
+          sourceBadge.textContent = dev.name;
+          deviceBtnIcon.innerHTML = iconSvg;
+          sendCommand({ action: "set_speaker_device", device: dev.name, index: dev.index });
+          renderFlyoutDevices();
+          sourceDeviceContainer.classList.remove("open");
+        });
+
+        flyoutDeviceList.appendChild(item);
+      });
+    }
+
+    // Toggle Sound Output Flyout
+    btnDeviceTrigger.addEventListener("click", (e) => {
+      e.stopPropagation();
+      if (currentSource === "mic") {
+        setSourceActive("speaker");
+        sendCommand({ action: "set_audio_source", source: "speaker" });
+      }
+      sourceDeviceContainer.classList.toggle("open");
+    });
+
+    if (btnCloseFlyout) {
+      btnCloseFlyout.addEventListener("click", (e) => {
+        e.stopPropagation();
+        sourceDeviceContainer.classList.remove("open");
+      });
+    }
+
+    // Clicking anywhere outside closes the flyout
+    document.addEventListener("click", (e) => {
+      if (sourceDeviceContainer && !sourceDeviceContainer.contains(e.target)) {
+        sourceDeviceContainer.classList.remove("open");
+      }
+    });
+
+    sourceBtns.forEach(btn => {
+      btn.addEventListener("click", (e) => {
+        const source = btn.dataset.source;
+        if (source === "speaker" && currentSource === "speaker") {
+          sourceDeviceContainer.classList.toggle("open");
+        } else {
+          sourceDeviceContainer.classList.remove("open");
+          setSourceActive(source);
+          sendCommand({ action: "set_audio_source", source: source });
+        }
+      });
+    });
+
+    // Algorithm & Mode Buttons
+    const modeBtns = document.querySelectorAll(".mode-btn");
+    const btnAmbilightToggle = document.getElementById("btn-ambilight-toggle");
+    const ambilightToggleText = document.getElementById("ambilight-toggle-text");
+    let lastAudioMode = "bass_pulse";
+
+    function updateAmbilightUI(isOn) {
+      if (!btnAmbilightToggle) return;
+      if (isOn) {
+        btnAmbilightToggle.classList.add("active");
+        ambilightToggleText.textContent = "AMBILIGHT ON";
+      } else {
+        btnAmbilightToggle.classList.remove("active");
+        ambilightToggleText.textContent = "AMBILIGHT OFF";
+      }
+    }
+
+    function setModeActive(mode) {
+      currentMode = mode;
+      modeBtns.forEach(btn => {
+        if (btn.dataset.mode === mode) {
+          btn.classList.add("active");
+        } else {
+          btn.classList.remove("active");
+        }
+      });
+      if (mode === "screen_ambilight") {
+        updateAmbilightUI(true);
+      } else {
+        lastAudioMode = mode;
+        updateAmbilightUI(false);
+      }
+    }
+
+    function toggleAmbilight() {
+      if (currentMode === "screen_ambilight") {
+        const target = lastAudioMode || "bass_pulse";
+        setModeActive(target);
+        sendCommand({ action: "set_mode", mode: target });
+      } else {
+        lastAudioMode = currentMode;
+        setModeActive("screen_ambilight");
+        sendCommand({ action: "set_mode", mode: "screen_ambilight" });
+      }
+    }
+
+    if (btnAmbilightToggle) {
+      btnAmbilightToggle.addEventListener("click", toggleAmbilight);
+    }
+
+    modeBtns.forEach(btn => {
+      btn.addEventListener("click", () => {
+        const mode = btn.dataset.mode;
+        lastAudioMode = mode;
+        setModeActive(mode);
+        sendCommand({ action: "set_mode", mode: mode });
+      });
+    });
+
+    const algoBtns = document.querySelectorAll(".algo-btn");
+    function setAlgoActive(algo) {
+      currentAlgo = algo;
+      algoBtns.forEach(btn => {
+        if (btn.dataset.algo === algo) {
+          btn.classList.add("active");
+        } else {
+          btn.classList.remove("active");
+        }
+      });
+      updateAlgoBadge();
+    }
+
+    algoBtns.forEach(btn => {
+      btn.addEventListener("click", () => {
+        const algo = btn.dataset.algo;
+        setAlgoActive(algo);
+        sendCommand({ action: "set_algorithm", algorithm: algo });
+      });
+    });
+
+    // Diagnostic badge update
+    const algoBadge = document.getElementById("algo-badge");
+    function updateAlgoBadge() {
+      if (currentAlgo === "chroma_pitch") {
+        const note = latestMetrics.dominant_note || "C";
+        algoBadge.textContent = `Pitch: ${note}`;
+        algoBadge.style.borderColor = "rgba(255, 215, 0, 0.6)";
+        algoBadge.style.color = "#ffd700";
+      } else if (currentAlgo === "spectral_centroid") {
+        const hz = Math.round(latestMetrics.spectral_centroid || 1000);
+        let warmth = "Mid";
+        if (hz < 700) warmth = "Warm Amber";
+        else if (hz > 2200) warmth = "Bright Crisp";
+        algoBadge.textContent = `Timbre: ${warmth} (${hz} Hz)`;
+        algoBadge.style.borderColor = "rgba(56, 189, 248, 0.6)";
+        algoBadge.style.color = "#38bdf8";
+      } else if (currentAlgo === "rgb_projection") {
+        algoBadge.textContent = "RGB Physics (Direct)";
+        algoBadge.style.borderColor = "rgba(236, 72, 153, 0.6)";
+        algoBadge.style.color = "#ec4899";
+      } else {
+        algoBadge.textContent = "Harmonic Flow";
+        algoBadge.style.borderColor = "rgba(74, 222, 128, 0.6)";
+        algoBadge.style.color = "#4ade80";
+      }
+    }
+
+    // Bass Flash Controller
+    let currentFlashEnabled = true;
+    let currentFlashStyle = "white_flare";
+    let currentFlashIntensity = 1.0;
+    let currentFlashThreshold = 0.38;
+    let isDraggingIntensity = false;
+    let isDraggingThreshold = false;
+
+    const btnFlashToggle = document.getElementById("btn-flash-toggle");
+    const flashToggleText = document.getElementById("flash-toggle-text");
+    const flashStyleBtns = document.querySelectorAll(".flash-style-btn");
+    const sliderIntensity = document.getElementById("slider-intensity");
+    const valIntensity = document.getElementById("val-intensity");
+    const sliderThreshold = document.getElementById("slider-threshold");
+    const valThreshold = document.getElementById("val-threshold");
+    const btnTestFlash = document.getElementById("btn-test-flash");
+
+    function getSensitivityLabel(thresh) {
+      if (thresh <= 0.26) return "High";
+      if (thresh >= 0.50) return "Low";
+      return "Normal";
+    }
+
+    function updateBassFlashUI(flash) {
+      if (typeof flash.enabled === "boolean") {
+        currentFlashEnabled = flash.enabled;
+        if (currentFlashEnabled) {
+          btnFlashToggle.classList.add("active");
+          flashToggleText.textContent = "FLASH ON";
+        } else {
+          btnFlashToggle.classList.remove("active");
+          flashToggleText.textContent = "FLASH OFF";
+        }
+      }
+
+      if (flash.style && flash.style !== currentFlashStyle) {
+        currentFlashStyle = flash.style;
+        flashStyleBtns.forEach(btn => {
+          if (btn.dataset.style === flash.style) {
+            btn.classList.add("active");
+          } else {
+            btn.classList.remove("active");
+          }
+        });
+      }
+
+      if (!isDraggingIntensity && typeof flash.intensity === "number") {
+        currentFlashIntensity = flash.intensity;
+        sliderIntensity.value = flash.intensity;
+        valIntensity.textContent = `${Math.round(flash.intensity * 100)}%`;
+      }
+
+      if (!isDraggingThreshold && typeof flash.threshold === "number") {
+        currentFlashThreshold = flash.threshold;
+        sliderThreshold.value = flash.threshold;
+        valThreshold.textContent = getSensitivityLabel(flash.threshold);
+      }
+    }
+
+    btnFlashToggle.addEventListener("click", () => {
+      currentFlashEnabled = !currentFlashEnabled;
+      if (currentFlashEnabled) {
+        btnFlashToggle.classList.add("active");
+        flashToggleText.textContent = "FLASH ON";
+      } else {
+        btnFlashToggle.classList.remove("active");
+        flashToggleText.textContent = "FLASH OFF";
+      }
+      sendCommand({ action: "set_bass_flash", enabled: currentFlashEnabled });
+    });
+
+    flashStyleBtns.forEach(btn => {
+      btn.addEventListener("click", () => {
+        const style = btn.dataset.style;
+        currentFlashStyle = style;
+        flashStyleBtns.forEach(b => {
+          if (b.dataset.style === style) b.classList.add("active");
+          else b.classList.remove("active");
+        });
+        sendCommand({ action: "set_flash_style", style: style });
+      });
+    });
+
+    sliderIntensity.addEventListener("mousedown", () => { isDraggingIntensity = true; });
+    sliderIntensity.addEventListener("touchstart", () => { isDraggingIntensity = true; }, { passive: true });
+    sliderIntensity.addEventListener("input", (e) => {
+      const val = parseFloat(e.target.value);
+      currentFlashIntensity = val;
+      valIntensity.textContent = `${Math.round(val * 100)}%`;
+      sendCommand({ action: "set_flash_intensity", intensity: val });
+    });
+    sliderIntensity.addEventListener("mouseup", () => { isDraggingIntensity = false; });
+    sliderIntensity.addEventListener("touchend", () => { isDraggingIntensity = false; });
+
+    sliderThreshold.addEventListener("mousedown", () => { isDraggingThreshold = true; });
+    sliderThreshold.addEventListener("touchstart", () => { isDraggingThreshold = true; }, { passive: true });
+    sliderThreshold.addEventListener("input", (e) => {
+      const val = parseFloat(e.target.value);
+      currentFlashThreshold = val;
+      valThreshold.textContent = getSensitivityLabel(val);
+      sendCommand({ action: "set_flash_threshold", threshold: val });
+    });
+    sliderThreshold.addEventListener("mouseup", () => { isDraggingThreshold = false; });
+    sliderThreshold.addEventListener("touchend", () => { isDraggingThreshold = false; });
+
+    function triggerTestFlash() {
+      btnTestFlash.classList.add("active");
+      setTimeout(() => btnTestFlash.classList.remove("active"), 160);
+      smoothCoverScale = 1.25;
+      sendCommand({ action: "trigger_flash", intensity: 1.2 });
+    }
+    btnTestFlash.addEventListener("click", triggerTestFlash);
+
+    // Windows Media Player Controller & Center Cover Visualizer
+    const visualizerCoverFrame = document.getElementById("visualizer-cover-frame");
+    const mediaCover = document.getElementById("media-cover");
+    const mediaCoverPlaceholder = document.getElementById("media-cover-placeholder");
+    const mediaTitle = document.getElementById("media-title");
+    const mediaArtist = document.getElementById("media-artist");
+    const mediaAppBadge = document.getElementById("media-app-badge");
+    const mediaTimeCur = document.getElementById("media-time-cur");
+    const mediaTimeDur = document.getElementById("media-time-dur");
+    const mediaProgressFill = document.getElementById("media-progress-fill");
+    const btnMediaPrev = document.getElementById("btn-media-prev");
+    const btnMediaPlay = document.getElementById("btn-media-play");
+    const btnMediaNext = document.getElementById("btn-media-next");
+    const iconPlay = document.getElementById("icon-play");
+    const iconPause = document.getElementById("icon-pause");
+    let smoothCoverScale = 1.0;
+
+    function formatTime(seconds) {
+      if (isNaN(seconds) || seconds < 0) return "0:00";
+      const mins = Math.floor(seconds / 60);
+      const secs = Math.floor(seconds % 60);
+      return `${mins}:${secs < 10 ? "0" : ""}${secs}`;
+    }
+
+    function updateMediaUI(media) {
+      if (!media) return;
+
+      if (media.title) mediaTitle.textContent = media.title;
+      if (media.artist !== undefined) mediaArtist.textContent = media.artist || "Playing via Windows";
+
+      if (media.app_id) {
+        let app = media.app_id.split("!")[0].split(".")[0];
+        if (app.length > 12) app = app.substring(0, 10) + "..";
+        mediaAppBadge.textContent = app.toUpperCase();
+      }
+
+      // Live Thumbnail Cover Art
+      if (media.thumbnail) {
+        mediaCover.src = media.thumbnail;
+        mediaCover.style.display = "block";
+        mediaCoverPlaceholder.style.display = "none";
+      } else if (!media.has_media && !mediaCover.src) {
+        mediaCover.style.display = "none";
+        mediaCoverPlaceholder.style.display = "flex";
+      }
+
+      // Play / Pause Icon State
+      if (media.is_playing) {
+        iconPlay.style.display = "none";
+        iconPause.style.display = "block";
+      } else {
+        iconPlay.style.display = "block";
+        iconPause.style.display = "none";
+      }
+
+      // Timeline & Progress
+      const pos = media.position || 0;
+      const dur = media.duration || 0;
+      mediaTimeCur.textContent = formatTime(pos);
+      mediaTimeDur.textContent = formatTime(dur);
+
+      if (dur > 0) {
+        const pct = Math.min(100, Math.max(0, (pos / dur) * 100));
+        mediaProgressFill.style.width = `${pct}%`;
+      } else {
+        mediaProgressFill.style.width = "0%";
+      }
+    }
+
+    btnMediaPrev.addEventListener("click", () => {
+      sendCommand({ action: "media_previous" });
+    });
+
+    btnMediaPlay.addEventListener("click", () => {
+      sendCommand({ action: "media_play_pause" });
+    });
+
+    btnMediaNext.addEventListener("click", () => {
+      sendCommand({ action: "media_next" });
+    });
+
+    // Fullscreen and Space toggle
+    const btnFullscreen = document.getElementById("btn-fullscreen");
+    btnFullscreen.addEventListener("click", toggleFullscreen);
+
+    const btnClean = document.getElementById("btn-clean");
+    btnClean.addEventListener("click", () => {
+      document.body.classList.toggle("clean-mode");
+    });
+
+    function toggleFullscreen() {
+      if (!document.fullscreenElement) {
+        document.documentElement.requestFullscreen().catch(() => {});
+      } else {
+        document.exitFullscreen().catch(() => {});
+      }
+    }
+
+    window.addEventListener("keydown", (e) => {
+      if (e.code === "Space") {
+        document.body.classList.toggle("clean-mode");
+      } else if (e.code === "KeyF") {
+        toggleFullscreen();
+      } else if (e.code === "KeyB") {
+        btnFlashToggle.click();
+      } else if (e.code === "KeyT") {
+        triggerTestFlash();
+      } else if (e.code === "KeyS") {
+        const nextSrc = currentSource === "speaker" ? "mic" : "speaker";
+        setSourceActive(nextSrc);
+        sendCommand({ action: "set_audio_source", source: nextSrc });
+      } else if (e.code === "KeyA") {
+        const algos = ["harmonic_flow", "spectral_centroid", "chroma_pitch", "rgb_projection"];
+        const nextIdx = (algos.indexOf(currentAlgo) + 1) % algos.length;
+        const nextAlgo = algos[nextIdx];
+        setAlgoActive(nextAlgo);
+        sendCommand({ action: "set_algorithm", algorithm: nextAlgo });
+      } else if (e.key === "5") {
+        toggleAmbilight();
+      } else if (e.key >= "1" && e.key <= "4") {
+        const modes = ["bass_pulse", "rainbow_wave", "ambient_chill", "rave_strobe"];
+        const selected = modes[parseInt(e.key) - 1];
+        lastAudioMode = selected;
+        setModeActive(selected);
+        sendCommand({ action: "set_mode", mode: selected });
+      }
+    });
+
+    window.addEventListener("dblclick", () => {
+      document.body.classList.toggle("clean-mode");
+    });
+
+    // High performance 60fps render loop
+    const rootStyle = document.documentElement.style;
+    const statRgb = document.getElementById("stat-rgb");
+    const statHue = document.getElementById("stat-hue");
+    const statVal = document.getElementById("stat-val");
+
+    function resizeCanvas() {
+      if (canvas.parentElement) {
+        canvas.width = canvas.parentElement.clientWidth;
+      }
+    }
+    window.addEventListener("resize", resizeCanvas);
+    resizeCanvas();
+
+    function render() {
+      const [r, g, b] = currentRGB;
+      const [hue, sat, val] = currentHSV;
+      const brightNorm = Math.max(0.15, val / 100.0);
+
+      // Whole Screen Solid Color Update (Edge-to-Edge)
+      rootStyle.setProperty("--bulb-r", r);
+      rootStyle.setProperty("--bulb-g", g);
+      rootStyle.setProperty("--bulb-b", b);
+      rootStyle.setProperty("--bulb-bright", brightNorm);
+
+      statRgb.textContent = `RGB(${r}, ${g}, ${b})`;
+      statHue.textContent = `${Math.round(hue)}°`;
+      statVal.textContent = `${Math.round(val)}%`;
+
+      // Audio-reactive visualizer scaling for center cover art
+      if (visualizerCoverFrame) {
+        const bass = latestMetrics.bass || 0;
+        const kickBoost = isKick ? 0.16 : 0.0;
+        const targetScale = 0.98 + (bass * 0.28) + kickBoost;
+
+        if (targetScale > smoothCoverScale) {
+          // Snappy attack on kick / bass drop
+          smoothCoverScale = smoothCoverScale * 0.58 + targetScale * 0.42;
+        } else {
+          // Smooth exponential decay for natural bounce
+          smoothCoverScale = smoothCoverScale * 0.88 + targetScale * 0.12;
+        }
+
+        visualizerCoverFrame.style.transform = `scale(${smoothCoverScale.toFixed(3)})`;
+
+        // Dynamic reactive aura matching room lighting color
+        const glowAlpha = Math.min(0.85, 0.25 + (bass * 0.55) + (isKick ? 0.35 : 0.0));
+        const glowSpread = Math.round(20 + (bass * 48) + (isKick ? 28 : 0));
+        visualizerCoverFrame.style.boxShadow = `0 24px 60px rgba(0, 0, 0, 0.70), 0 0 ${glowSpread}px rgba(${r}, ${g}, ${b}, ${glowAlpha.toFixed(2)})`;
+      }
+
+      // Draw Equalizer Bars on Canvas
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      const numBands = currentBands.length;
+      const totalWidth = canvas.width;
+      const barSpacing = 6;
+      const barWidth = (totalWidth - (numBands - 1) * barSpacing) / numBands;
+      const maxHeight = canvas.height - 10;
+
+      for (let i = 0; i < numBands; i++) {
+        const bandVal = currentBands[i];
+        const barHeight = Math.max(4, bandVal * maxHeight);
+        const x = i * (barWidth + barSpacing);
+        const y = canvas.height - barHeight;
+
+        // Translucent dark-glass bar backdrop with white accent for contrast
+        ctx.fillStyle = "rgba(0, 0, 0, 0.45)";
+        ctx.beginPath();
+        ctx.roundRect(x, y, barWidth, barHeight, [4, 4, 0, 0]);
+        ctx.fill();
+
+        ctx.fillStyle = `rgba(255, 255, 255, ${0.45 + bandVal * 0.55})`;
+        ctx.beginPath();
+        ctx.roundRect(x, y, barWidth, Math.min(barHeight, 6), [4, 4, 0, 0]);
+        ctx.fill();
+      }
+
+      requestAnimationFrame(render);
+    }
+
+    requestAnimationFrame(render);
+  </script>
+</body>
+</html>
