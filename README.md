@@ -1,4 +1,4 @@
-# 🌈 Async 2.0: Real-Time Audio-Reactive Smart Lighting & Fast-Edit Ambilight
+# Async 2.0: Real-Time Audio-Reactive Smart Lighting & Fast-Edit Ambilight
 
 > **Sub-30ms local music-reactive lighting, high-performance screen sync Ambilight, physical Cava equalizer, and a Windows 11 Fluent Room Simulator.**
 
