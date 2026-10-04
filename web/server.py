@@ -31,27 +31,18 @@ class AsyncWebServer:
     def _setup_routes(self):
         self.app.router.add_get("/", self._handle_index)
         self.app.router.add_get("/ws", self._handle_ws)
-        self.app.router.add_get("/favicon.png", self._handle_favicon_png)
-        self.app.router.add_get("/favicon.ico", self._handle_favicon_ico)
-        self.app.router.add_get("/logo.png", self._handle_logo_png)
+        for route_file in ["favicon.png", "favicon.ico", "favicon-32x32.png", "favicon-16x16.png",
+                           "apple-touch-icon.png", "site.webmanifest", "logo.png",
+                           "android-chrome-192x192.png", "android-chrome-512x512.png"]:
+            self.app.router.add_get(f"/{route_file}", self._make_asset_handler(route_file))
 
-    async def _handle_favicon_png(self, request: web.Request) -> web.StreamResponse:
-        fav = WEB_DIR.parent / "assets" / "logo.png"
-        if fav.exists():
-            return web.FileResponse(fav)
-        return web.Response(status=404)
-
-    async def _handle_favicon_ico(self, request: web.Request) -> web.StreamResponse:
-        ico = WEB_DIR.parent / "assets" / "icon.ico"
-        if ico.exists():
-            return web.FileResponse(ico)
-        return web.Response(status=404)
-
-    async def _handle_logo_png(self, request: web.Request) -> web.StreamResponse:
-        logo = WEB_DIR.parent / "assets" / "logo.png"
-        if logo.exists():
-            return web.FileResponse(logo)
-        return web.Response(status=404)
+    def _make_asset_handler(self, filename: str):
+        async def handler(request: web.Request) -> web.StreamResponse:
+            target = WEB_DIR.parent / "assets" / filename
+            if target.exists():
+                return web.FileResponse(target)
+            return web.Response(status=404)
+        return handler
 
     async def _handle_index(self, request: web.Request) -> web.Response:
         index_file = WEB_DIR / "index.html"
