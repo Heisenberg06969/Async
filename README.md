@@ -1,6 +1,8 @@
-# Async 2.0: Real-Time Audio-Reactive Smart Lighting & Fast-Edit Ambilight
-
-> **Sub-30ms local music-reactive lighting, high-performance screen sync Ambilight, physical Cava equalizer, and a Windows 11 Fluent Room Simulator.**
+<div align="center">
+  <img src="assets/logo.png" alt="Async Logo" width="160" style="border-radius: 28px; box-shadow: 0 12px 35px rgba(0,0,0,0.5);">
+  <h1>Async 2.0: Real-Time Audio-Reactive Smart Lighting & Fast-Edit Ambilight</h1>
+  <p><b>Sub-30ms local music-reactive lighting, high-performance screen sync Ambilight, physical Cava equalizer, and a Windows 11 Fluent Room Simulator.</b></p>
+</div>
 
 [![Python](https://img.shields.io/badge/Python-3.10%20%7C%203.11%20%7C%203.12-3776ab?logo=python&logoColor=white)](https://www.python.org/)
 [![Platform](https://img.shields.io/badge/Platform-Windows%2011%20%2F%2010%20(WASAPI)-0078d4?logo=windows&logoColor=white)](https://microsoft.com/windows)

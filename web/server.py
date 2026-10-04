@@ -31,6 +31,27 @@ class AsyncWebServer:
     def _setup_routes(self):
         self.app.router.add_get("/", self._handle_index)
         self.app.router.add_get("/ws", self._handle_ws)
+        self.app.router.add_get("/favicon.png", self._handle_favicon_png)
+        self.app.router.add_get("/favicon.ico", self._handle_favicon_ico)
+        self.app.router.add_get("/logo.png", self._handle_logo_png)
+
+    async def _handle_favicon_png(self, request: web.Request) -> web.StreamResponse:
+        fav = WEB_DIR.parent / "assets" / "logo.png"
+        if fav.exists():
+            return web.FileResponse(fav)
+        return web.Response(status=404)
+
+    async def _handle_favicon_ico(self, request: web.Request) -> web.StreamResponse:
+        ico = WEB_DIR.parent / "assets" / "icon.ico"
+        if ico.exists():
+            return web.FileResponse(ico)
+        return web.Response(status=404)
+
+    async def _handle_logo_png(self, request: web.Request) -> web.StreamResponse:
+        logo = WEB_DIR.parent / "assets" / "logo.png"
+        if logo.exists():
+            return web.FileResponse(logo)
+        return web.Response(status=404)
 
     async def _handle_index(self, request: web.Request) -> web.Response:
         index_file = WEB_DIR / "index.html"

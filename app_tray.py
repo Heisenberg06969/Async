@@ -701,6 +701,10 @@ def main():
     app = QApplication.instance() or QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False) # Do not exit when windows close; stay in tray
 
+    icon_path = Path(__file__).parent / "assets" / "icon.ico"
+    if icon_path.exists():
+        app.setWindowIcon(QIcon(str(icon_path)))
+
     # 1. Check if another instance is already running
     socket = QLocalSocket()
     socket.connectToServer(LOCAL_SERVER_NAME)
