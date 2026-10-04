@@ -234,11 +234,31 @@ class AsyncTrayApp(QObject):
         # Initialize System Tray
         self.tray_icon = QSystemTrayIcon(self)
         self.tray_menu = QMenu()
+
+        # Tray Icon Style: Default to official brand logo
+        self.icon_style = "brand"  # "brand" or "orb"
+        self._current_tray_style = None
+
+        self.brand_icon_path = Path(__file__).parent / "assets" / "icon.ico"
+        if not self.brand_icon_path.exists():
+            self.brand_icon_path = Path(__file__).parent / "assets" / "tray_icon_32.png"
+
+        if self.brand_icon_path.exists():
+            self.brand_icon = QIcon(str(self.brand_icon_path))
+        else:
+            self.brand_icon = None
+
         self._build_tray_menu()
 
         # Initial icon
-        initial_icon = create_orb_icon(132, 209, 10, self.bulb.is_connected, False, self.light_power)
-        self.tray_icon.setIcon(initial_icon)
+        if self.brand_icon and not self.brand_icon.isNull():
+            self.tray_icon.setIcon(self.brand_icon)
+            self._current_tray_style = "brand"
+        else:
+            initial_icon = create_orb_icon(132, 209, 10, self.bulb.is_connected, False, self.light_power)
+            self.tray_icon.setIcon(initial_icon)
+            self._current_tray_style = "orb"
+
         self.tray_icon.setToolTip("Async 2.0: Room Lighting Sync\nLeft-click: Toggle Ambilight\nRight-click: Menu")
 
         # Hook tray interactions
@@ -428,7 +448,27 @@ class AsyncTrayApp(QObject):
 
         self.tray_menu.addSeparator()
 
-        # 9. Open Room Simulator
+        # 9. Tray Icon Style Submenu
+        icon_menu = self.tray_menu.addMenu("🎨 Tray Icon Style")
+        self.act_style_brand = QAction("Official Async Logo", icon_menu)
+        self.act_style_brand.setCheckable(True)
+        self.act_style_brand.setChecked(self.icon_style == "brand")
+        self.act_style_brand.triggered.connect(lambda: self._set_icon_style("brand"))
+
+        self.act_style_orb = QAction("Dynamic Live RGB Orb", icon_menu)
+        self.act_style_orb.setCheckable(True)
+        self.act_style_orb.setChecked(self.icon_style == "orb")
+        self.act_style_orb.triggered.connect(lambda: self._set_icon_style("orb"))
+
+        style_group = QActionGroup(self)
+        style_group.setExclusive(True)
+        style_group.addAction(self.act_style_brand)
+        style_group.addAction(self.act_style_orb)
+
+        icon_menu.addAction(self.act_style_brand)
+        icon_menu.addAction(self.act_style_orb)
+
+        # 10. Open Room Simulator
         act_open_sim = QAction("🌐 Open Room Simulator (Web)", self.tray_menu)
         act_open_sim.triggered.connect(self._open_web_simulator)
         self.tray_menu.addAction(act_open_sim)
@@ -522,6 +562,22 @@ class AsyncTrayApp(QObject):
             webbrowser.open("http://localhost:5050")
         except Exception as e:
             logger.error(f"Failed to open web browser: {e}")
+
+    def _set_icon_style(self, style: str):
+        """Switches between Official Brand Logo and Live Dynamic RGB Orb in system tray."""
+        self.icon_style = style
+        if style == "brand":
+            if self.brand_icon and not self.brand_icon.isNull():
+                self.tray_icon.setIcon(self.brand_icon)
+            self._current_tray_style = "brand"
+            self.tray_icon.showMessage("Async 2.0", "Tray Icon: Official Async Logo", QSystemTrayIcon.Information, 1000)
+        else:
+            with self._lock:
+                r, g, b = self.current_rgb
+            icon = create_orb_icon(r, g, b, self.bulb.is_connected, self.screen_sync.is_strobe_active, self.light_power)
+            self.tray_icon.setIcon(icon)
+            self._current_tray_style = "orb"
+            self.tray_icon.showMessage("Async 2.0", "Tray Icon: Live Dynamic RGB Orb", QSystemTrayIcon.Information, 1000)
 
     def _on_tray_activated(self, reason):
         """Handles mouse clicks on the system tray icon."""
@@ -645,9 +701,16 @@ class AsyncTrayApp(QObject):
         ping = self.bulb.ping_ms
         pps = self.bulb.packets_per_sec
 
-        # Dynamic icon
-        icon = create_orb_icon(r, g, b, is_connected, is_strobe, self.light_power)
-        self.tray_icon.setIcon(icon)
+        # Tray Icon update
+        if self.icon_style == "brand":
+            if self._current_tray_style != "brand":
+                if self.brand_icon and not self.brand_icon.isNull():
+                    self.tray_icon.setIcon(self.brand_icon)
+                self._current_tray_style = "brand"
+        else:
+            icon = create_orb_icon(r, g, b, is_connected, is_strobe, self.light_power)
+            self.tray_icon.setIcon(icon)
+            self._current_tray_style = "orb"
 
         # Status action in menu
         if self.bulb.dry_run:
