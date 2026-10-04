@@ -149,6 +149,12 @@ def main():
             mapper.set_flash_style(cmd.get("style", "white_flare"))
         elif action == "trigger_flash":
             mapper.trigger_flash(float(cmd.get("intensity", 1.0)))
+        elif action == "set_strobe_boost":
+            screen_sync.set_strobe_boost(cmd.get("enabled", True))
+        elif action == "set_strobe_sensitivity":
+            screen_sync.set_strobe_sensitivity(float(cmd.get("sensitivity", 0.16)))
+        elif action == "set_strobe_floor":
+            screen_sync.set_strobe_floor(float(cmd.get("floor", 0.26)))
         elif action == "media_play_pause":
             media.toggle_play_pause()
         elif action == "media_next":
@@ -216,6 +222,9 @@ def main():
                 elif key == "b":
                     mapper.set_bass_flash(not mapper.bass_flash_enabled)
                     status_msg = f"Flash: {'ON' if mapper.bass_flash_enabled else 'OFF'}"
+                elif key == "f":
+                    screen_sync.set_strobe_boost(not screen_sync.strobe_boost)
+                    status_msg = f"Strobe Boost: {'ON' if screen_sync.strobe_boost else 'OFF'}"
                 elif key == "t":
                     mapper.trigger_flash(1.2)
                     status_msg = "Flash Triggered!"
@@ -282,8 +291,11 @@ def main():
                 "algorithm": mapper.algorithm,
                 "bulb": {
                     "connected": bulb.is_connected,
-                    "ping_ms": bulb.ping_ms
+                    "ping_ms": bulb.ping_ms,
+                    "rate_pps": bulb.packets_per_sec,
+                    "reconnects": bulb.reconnect_count
                 },
+                "screen_sync": screen_sync.get_status(),
                 "source": audio.source_mode,
                 "source_name": audio.get_clean_device_name(),
                 "speaker_devices": speaker_devices_cache,
@@ -371,15 +383,20 @@ def main():
             filled = int((val / 100.0) * gauge_len)
             gauge = "█" * filled + "░" * (gauge_len - filled)
 
-            # Kick indicator
-            kick_badge = "\033[97;41;1m 💥 KICK! \033[0m" if metrics["is_kick"] else "\033[90m [      ] \033[0m"
+            # Kick & Strobe badges
+            if screen_sync.is_strobe_active:
+                event_badge = "\033[97;45;1m ⚡ STROBE! \033[0m"
+            elif metrics["is_kick"]:
+                event_badge = "\033[97;41;1m 💥 KICK!   \033[0m"
+            else:
+                event_badge = "\033[90m [        ] \033[0m"
 
             if bulb.dry_run:
                 bulb_conn = "\033[93m◌ PREVIEW / DRY-RUN\033[0m"
             elif bulb.is_connected:
-                bulb_conn = f"\033[92m● CONNECTED ({bulb.ping_ms:.0f}ms)\033[0m"
+                bulb_conn = f"\033[92m● CONNECTED ({bulb.ping_ms:.0f}ms | {bulb.packets_per_sec:.1f} pps)\033[0m"
             else:
-                bulb_conn = "\033[91;1m◌ AUTO-RECONNECTING...\033[0m"
+                bulb_conn = f"\033[91;1m◌ AUTO-RECONNECTING (#{bulb.reconnect_count})...\033[0m"
             color_mode_label = f"\033[1;36mSINGLE BULB\033[0m" if bar_color_mode == "bulb" else "\033[1;35mRAINBOW\033[0m"
 
             # Algorithm details
@@ -396,6 +413,9 @@ def main():
             flash_status = "\033[92m● ON\033[0m" if mapper.bass_flash_enabled else "\033[90m○ OFF\033[0m"
             flash_style_name = mapper.bass_flash_style.replace('_', ' ').title()
 
+            strobe_status = "\033[92m● ON\033[0m" if screen_sync.strobe_boost else "\033[90m○ OFF\033[0m"
+            strobe_active_badge = "\033[1;95m⚡ FAST EDIT SHAKE\033[0m" if screen_sync.is_strobe_active else "\033[90mSmooth Cinema\033[0m"
+
             src_label = "\033[1;35m🎤 MIC\033[0m" if audio.source_mode == "mic" else "\033[1;34m🔊 SPEAKER\033[0m"
             dev_display = audio.device_info['name'][:22] if audio.device_info else "Audio"
             media_info_str = f"| Track: \033[1;97m{media_state['title'][:22]}\033[0m" if media_state['has_media'] else ""
@@ -403,7 +423,7 @@ def main():
             # Compose screen buffer
             output = (
                 "\033[H" # Move cursor to top-left
-                " \033[1;36m🌈 ASYNC: Real-Time Audio-Reactive Smart Lighting & Room Simulator\033[0m\n"
+                " \033[1;36m🌈 ASYNC 2.0: Real-Time Audio-Reactive Smart Lighting & Fast-Edit Ambilight\033[0m\n"
                 f" \033[90mSource: {src_label} \033[90m({dev_display}) | FPS: {current_fps:4.1f} | Bulb: {bulb_conn}\033[0m\n"
                 f" \033[90mWeb Simulator: \033[4;34mhttp://localhost:5050\033[0m \033[90m| Algo: \033[1m{algo_name}\033[0m {algo_extra} {media_info_str}\033[0m\n"
                 " ─────────────────────────────────────────────────────────────────────────────\n"
@@ -411,13 +431,14 @@ def main():
                 "  " + "▀▀" * num_bands + "\n"
                 f"  \033[90m[20 Hz] ─────────────── SUB-BASS ─── MIDS ─── TREBLE ─────────────── [16 kHz]\033[0m\n\n"
                 " ┌─────────────────────────── LIVE SMART LIGHT STATE ──────────────────────────┐\n"
-                f" │  Color Swatch : {swatch}  Mode: \033[1;33m{mapper.mode.upper():<14}\033[0m   {kick_badge}  │\n"
+                f" │  Color Swatch : {swatch}  Mode: \033[1;33m{mapper.mode.upper():<14}\033[0m  {event_badge} │\n"
                 f" │  RGB Output   : \033[1mR:{r:<3} G:{g:<3} B:{b:<3}\033[0m        Hue : \033[36m{hue:5.1f}°\033[0m Sat: \033[36m{sat:4.1f}%\033[0m              │\n"
                 f" │  Brightness   : [{gauge}] {val:5.1f}%   Bass Energy: {metrics['bass']*100:4.1f}%       │\n"
                 f" │  Bass Flash   : {flash_status} ({flash_style_name:<12})  Sens: {dsp.kick_threshold:4.2f} | Mul: {mapper.bass_flash_intensity*100:3.0f}%     │\n"
-                f" │  Target Bulb  : IP {bulb.ip_address}:6668 | ID: {bulb.device_id[:16]}...          │\n"
+                f" │  Strobe Boost : {strobe_status} (Floor: {screen_sync.strobe_floor*100:2.0f}%)  Sens: {screen_sync.strobe_sensitivity*100:2.0f}% | {strobe_active_badge:<25}│\n"
+                f" │  Target Bulb  : IP {bulb.ip_address}:6668 | Cadence: {bulb.packets_per_sec:4.1f} pps | Reconnects: {bulb.reconnect_count:<3}│\n"
                 " └─────────────────────────────────────────────────────────────────────────────┘\n"
-                f"  \033[90mControls: [1-4] Audio Modes | [5] Toggle Ambilight | [A] Algo | [B] Bass Flash | [T] Flash Test | [S] Source | [Q] Quit\033[0m\n"
+                f"  \033[90mControls: [1-4] Modes | [5] Ambilight | [F] Strobe Boost | [A] Algo | [B] Bass Flash | [S] Source | [Q] Quit\033[0m\n"
             )
 
             sys.stdout.write(output)

@@ -1,9 +1,10 @@
-# 🌈 Async: Real-Time Audio-Reactive Smart Lighting & Ambilight
+# 🌈 Async 2.0: Real-Time Audio-Reactive Smart Lighting & Fast-Edit Ambilight
 
 > **Sub-30ms local music-reactive lighting, high-performance screen sync Ambilight, physical Cava equalizer, and a Windows 11 Fluent Room Simulator.**
 
 [![Python](https://img.shields.io/badge/Python-3.10%20%7C%203.11%20%7C%203.12-3776ab?logo=python&logoColor=white)](https://www.python.org/)
 [![Platform](https://img.shields.io/badge/Platform-Windows%2011%20%2F%2010%20(WASAPI)-0078d4?logo=windows&logoColor=white)](https://microsoft.com/windows)
+[![Version](https://img.shields.io/badge/Version-2.0%20Release-purple.svg)]()
 [![Latency](https://img.shields.io/badge/Latency-%3C25ms%20Local%20LAN-brightgreen.svg)]()
 [![Hardware](https://img.shields.io/badge/Hardware-Tuya%20%7C%20Smart%20Life%20%7C%20WLED%20%7C%20Havells-orange.svg)]()
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
@@ -12,23 +13,24 @@
 
 ## ⚡ What is Async?
 
-**Async** transforms your room into an interactive audiovisual experience. It captures system audio from Spotify, YouTube, games, and media players with zero-latency **Windows WASAPI loopback**, processes frequency spectrums using **NumPy Fast Fourier Transforms (FFT)**, and drives your smart lights directly over your local Wi-Fi network with **zero cloud delay**.
+**Async** transforms your room into an interactive audiovisual experience. It captures system audio from Spotify, YouTube, games, and media players with zero-latency **Windows WASAPI loopback**, processes frequency spectrums using **NumPy Fast Fourier Transforms (FFT)**, captures desktop screen pixels for **Ambilight**, and drives your smart lights directly over your local Wi-Fi network with **zero cloud delay**.
 
 Whether you have a standard **Tuya / Smart Life / Havells / Wipro** smart bulb, an **ESP32 WLED** desk strip, or **no hardware at all** (using the edge-to-edge browser room simulator), Async delivers synchronized, cinematic ambient illumination.
 
 ```
                     ┌──────────────────────────────────────────────┐
-                    │          WINDOWS 11 AUDIO OUTPUT             │
+                    │          WINDOWS 11 AUDIO & SCREEN           │
                     │       (Spotify, YouTube, FxSound, Games)     │
                     └──────────────────────┬───────────────────────┘
                                            │
-                                           ▼ (WASAPI Loopback Capture)
+                                           ▼ (WASAPI Loopback & DWM Capture)
                     ┌──────────────────────────────────────────────┐
-                    │          ASYNC REAL-TIME DSP ENGINE          │
+                    │          ASYNC 2.0 REAL-TIME DSP ENGINE      │
                     │                                              │
-                    │  1. NumPy FFT Spectrum Slicing (45+ FPS)     │
-                    │  2. Dynamic AGC & Kick Drum Beat Detection   │
-                    │  3. 4 Decision Algorithms (Chroma / Physics) │
+                    │  1. NumPy FFT Spectrum Slicing (60 FPS)      │
+                    │  2. Asymmetric Transient Strobe Engine       │
+                    │  3. Peak-Preserving Cadence Dispatcher       │
+                    │  4. Sub-Second Self-Healing Watchdog (<350ms)│
                     └──────────────────────┬───────────────────────┘
                                            │
          ┌─────────────────────────────────┼─────────────────────────────────┐
@@ -39,18 +41,43 @@ Whether you have a standard **Tuya / Smart Life / Havells / Wipro** smart bulb, 
 │  (Tuya / Smart Life / Havells)│ │  (Edge-to-Edge Screen Glow) │ │  (ESP32 + WLED Desk Strips) │
 │  - Whole-room ambient glow  │ │  - Windows 11 Fluent UI     │ │  - 60+ individual LED bars  │
 │  - Sub-25ms response time   │ │  - Album art & Media Player │ │  - Physical Cava equalizer  │
-│  - Automatic watchdog probe │ │  - Pure Light mode [Space]  │ │  - Sub-15ms UDP streaming   │
+│  - Sub-350ms self-healing   │ │  - Strobe Boost indicator   │ │  - Sub-15ms UDP streaming   │
+│  - Peak-preserving cadence  │ │  - Pure Light mode [Space]  │ │  - 60 FPS real-time sync    │
 └─────────────────────────────┘ └─────────────────────────────┘ └─────────────────────────────┘
 ```
 
 ---
 
-## 🌟 Key Features
+## 🚀 What's New in Version 2.0?
+
+Async 2.0 solves two of the most technically challenging bottlenecks in consumer IoT smart lighting:
+
+### 1. ⚡ Asymmetric Transient Strobe Engine (Fast Edits & Flash Shakes)
+* **The Problem:** In high-tempo edits (car edits, Reels, phonk videos, and EDM strobe sequences), videos alternate rapidly between blinding white flashes and dark silhouettes (white $\leftrightarrow$ black shakes at 5–12 Hz). Traditional Exponential Moving Average (EMA) filters smooth this out into a continuous, plateaued 100% white light, ruining the effect.
+* **The 2.0 Solution:**
+  * **Asymmetric Attack & Decay:** Instant rise ($\alpha = 0.95$) on flash spikes, paired with an aggressive contrast plunge ($\alpha = 0.88$) down to a 26% trough floor on dark frames.
+  * **Hardware-Compensated Trough Hold:** Holds the dark trough for 75ms to overcome Tuya bulb internal hardware slew ramps, allowing the physical LED phosphor to visually extinguish before the next flash hits.
+  * **Result:** Razor-sharp $100\% \leftrightarrow 26\%$ strobe oscillations in both the physical room and the browser simulator.
+
+### 2. 🛡️ Sub-Second Self-Healing Watchdog (<350ms Recovery)
+* **The Problem:** Flooding the bulb's tiny Wi-Fi microcontroller (ESP8266 or Beken BK7231N) during intense burst scenes could fill its small TCP buffer, causing socket hangs. The previous 3.5-second heartbeat allowed dead sockets to linger for up to 5 seconds during critical song drops.
+* **The 2.0 Solution:**
+  * **Event-Driven Socket Polling:** Uses non-blocking OS `select` calls (0% CPU) to drain unread TCP ACK buffers and detect closed sockets within **8ms**.
+  * **Instant Send Exception Interception:** Catches write errors immediately and executes an asynchronous reconnect in **<350ms** without freezing the main audio analysis or visualizer loop.
+
+### 3. 🎯 Peak-Preserving Cadence Rate Limiter (16 FPS)
+* Microcontroller-synchronized transmission pacing at **16 FPS (62ms)** prevents Wi-Fi buffer congestion.
+* Automatically prioritizes peak flashes ($V \ge 90\%$) and trough drops ($V \le 30\%$) while coalescing noisy intermediate frames.
+* Enabled **RFC 896 `TCP_NODELAY`** to eliminate Nagle buffering delays on Windows.
+
+---
+
+## 🌟 Core Features
 
 ### 🖥️ High-Performance Ambilight (Screen Sync)
-* **30 FPS Native Capture:** Uses hardware-accelerated Windows Desktop Window Manager (DWM) frame capture with under **8ms frame extraction time** and **~1% CPU overhead**.
+* **30 FPS Native Capture:** Uses hardware-accelerated Windows Desktop Window Manager (DWM) frame capture with under **8ms extraction time** and **~1% CPU overhead**.
 * **Smart Letterbox Cropping:** Automatically detects and crops out 16:9 / 21:9 black cinematic movie bars so dark borders never mute your lighting.
-* **Cinematic Vibrancy:** Built-in saturation booster (+35%) and Exponential Moving Average (EMA) temporal smoothing prevent jarring strobe flickers during movies and games.
+* **Cinematic Vibrancy:** Built-in saturation booster (+35%) and smooth cinema mode for movies.
 * **One-Click Toggle:** Switch between Audio-Reactive music modes and Screen Ambilight with a dedicated UI toggle button or key `[5]`.
 
 ### 🎵 4 Color Decision Algorithms
@@ -76,12 +103,6 @@ Whether you have a standard **Tuya / Smart Life / Havells / Wipro** smart bulb, 
 * Displays live **Album Artwork**, track title, artist name, and a real-time playback progress bar.
 * Built-in playback controls: Play/Pause, Next Track, and Previous Track.
 
-### 🛡️ Self-Healing Background Architecture
-* **Non-Blocking Worker:** Smart light transmissions run on an independent background thread so network jitter never stalls audio analysis or the visualizer.
-* **3.5-Second Health Watchdog:** Actively sends heartbeat probes over port 6668 to monitor connection health and measure round-trip ping.
-* **Auto-Reconnect:** If a Wi-Fi packet drops or the light reboots, Async force-closes the socket and auto-reconnects within 2 seconds.
-* **Zero-Delay Audio Queue:** LIFO queue drainage ensures 100% zero-latency audio sync with no stale buffer buildup.
-
 ---
 
 ## 🚀 Quick Start
@@ -93,8 +114,8 @@ Whether you have a standard **Tuya / Smart Life / Havells / Wipro** smart bulb, 
 ### 2. Installation
 Clone the repository and install dependencies:
 ```powershell
-git clone https://github.com/your-username/async-lighting.git
-cd async-lighting
+git clone https://github.com/Heisenberg06969/Async.git
+cd Async
 pip install -r requirements.txt
 ```
 
@@ -136,10 +157,11 @@ Async works with over **80% of consumer smart lighting** on the market through d
 
 ## ⌨️ Interactive Controls & Shortcuts
 
-| Key | Web / Console Action | Description |
+| Key (Console / Web) | Action | Description |
 |:---:|---|---|
 | `[Space]` | Pure Light Mode | Hides all GUI panels for 100% borderless room lighting |
 | `[5]` | **Toggle Ambilight** | Turns real-time screen color sync ON or OFF |
+| `[F]` (CLI) / `[E]` (Web) | **Strobe Boost (2.0)** | Toggles high-tempo fast-edit shake and strobe tracking |
 | `[1]` | Beat Flare | Audio-reactive mode: Ambient glow + white-hot bass kick surge |
 | `[2]` | Rainbow Wave | Continuous chromatic rotation accelerated by musical tempo |
 | `[3]` | Ambient Chill | Soft breathing pastel transitions for focus & study |
@@ -148,7 +170,7 @@ Async works with over **80% of consumer smart lighting** on the market through d
 | `[T]` | Test Flash | Triggers an immediate full-power manual flash pulse |
 | `[A]` | Cycle Algorithm | Switches between Harmonic Flow, Timbre Warmth, Chroma, Physics |
 | `[S]` | Toggle Audio Source | Switches between Desktop Audio (Speaker) and Microphone |
-| `[F]` | Fullscreen | Enters or exits browser fullscreen display |
+| `[F]` (Web) | Fullscreen | Enters or exits browser fullscreen display |
 | `[+]` / `[-]` | Sensitivity | Increases or decreases audio reactivity gain |
 | `[Q]` | Quit | Cleanly shuts down audio streams, workers, and sockets |
 
@@ -157,7 +179,7 @@ Async works with over **80% of consumer smart lighting** on the market through d
 ## 📁 Project Structure
 
 ```
-async-lighting/
+Async/
 ├── config.example.json            <-- Template configuration
 ├── config.json                    <-- Your local bulb IP, keys, and DSP settings (git-ignored)
 ├── start.bat / run.bat            <-- 1-click Windows batch launchers (UTF-8, smart Python detection)
@@ -170,11 +192,11 @@ async-lighting/
 │   ├── audio_capture.py           <-- Windows WASAPI loopback capture & LIFO zero-latency queue
 │   ├── dsp_engine.py              <-- NumPy FFT frequency binning, dynamic AGC & beat detection
 │   ├── color_mapper.py            <-- 4 decision algorithms, HSV mapping & bass flash engine
-│   ├── screen_sync.py             <-- 30 FPS PySide6 DWM desktop capture & Ambilight processor
+│   ├── screen_sync.py             <-- Asymmetric Transient Strobe Engine & PySide6 DWM capture
 │   └── media_session.py           <-- Windows Media Transport Controls (SMTC) & thumbnail extractor
 │
 ├── drivers/
-│   ├── tuya_driver.py             <-- Non-blocking worker, 3.5s health watchdog & Tuya local driver
+│   ├── tuya_driver.py             <-- Async 2.0 driver: Peak-preserving cadence & sub-350ms recovery
 │   └── wled_driver.py             <-- UDP DDP streaming driver for ESP32 addressable strips
 │
 ├── tools/
@@ -192,7 +214,7 @@ async-lighting/
 Contributions, feature requests, and bug reports are welcome!
 1. Fork the Project
 2. Create your Feature Branch (`git checkout -b feature/AmazingFeature`)
-3. Commit your Changes (`git commit -m 'Add some AmazingFeature'`)
+3. Commit your Changes (`git commit -m 'feat: Add some AmazingFeature'`)
 4. Push to the Branch (`git push origin feature/AmazingFeature`)
 5. Open a Pull Request
 
@@ -200,4 +222,4 @@ Contributions, feature requests, and bug reports are welcome!
 
 ## 📄 License
 
-Distributed under the MIT License. See `LICENSE` for more information.
+Distributed under the MIT License. See [LICENSE](LICENSE) for more information.

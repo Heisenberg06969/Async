@@ -686,6 +686,75 @@
       animation: pulse-ring 1.2s infinite;
     }
 
+    /* Strobe Shake & Fast Edit Boost Button (Async 2.0) */
+    .strobe-toggle-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      padding: 6px 14px;
+      border-radius: 20px;
+      font-size: 0.80rem;
+      font-weight: 700;
+      cursor: pointer;
+      background: rgba(168, 85, 247, 0.15);
+      border: 1px solid rgba(168, 85, 247, 0.4);
+      color: #d8b4fe;
+      transition: all 0.2s ease;
+      letter-spacing: 0.4px;
+      outline: none;
+    }
+
+    .strobe-toggle-btn:hover {
+      background: rgba(168, 85, 247, 0.26);
+      border-color: rgba(168, 85, 247, 0.7);
+      color: #ffffff;
+      transform: translateY(-1px);
+    }
+
+    .strobe-toggle-btn:active {
+      transform: scale(0.95);
+    }
+
+    .strobe-toggle-btn.active {
+      background: #9333ea;
+      border-color: #c084fc;
+      color: #ffffff;
+      box-shadow: 0 0 18px rgba(168, 85, 247, 0.75), inset 0 1px 1px rgba(255, 255, 255, 0.4);
+    }
+
+    .strobe-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: #64748b;
+      transition: all 0.2s ease;
+    }
+
+    .strobe-toggle-btn.active .strobe-dot {
+      background: #c084fc;
+      box-shadow: 0 0 8px #c084fc, 0 0 12px #ffffff;
+      animation: pulse-ring 0.8s infinite;
+    }
+
+    .strobe-shake-badge {
+      display: none;
+      align-items: center;
+      gap: 5px;
+      padding: 5px 12px;
+      border-radius: 14px;
+      font-size: 0.75rem;
+      font-weight: 800;
+      letter-spacing: 0.6px;
+      background: #f43f5e;
+      color: #ffffff;
+      box-shadow: 0 0 16px #f43f5e;
+      animation: pulse-ring 0.4s infinite;
+    }
+
+    .strobe-shake-badge.active {
+      display: inline-flex;
+    }
+
     /* Bass Flash Controller Styles */
     .flash-toggle-btn {
       background: rgba(239, 68, 68, 0.18);
@@ -802,7 +871,7 @@
 <body>
   <div id="light-flood"></div>
 
-  <div class="hint-toast">Press [Space] Pure Light | [5] Toggle Ambilight | [1-4] Audio Modes | [B] Bass Flash | [T] Test Flash | [S] Source | [A] Algo | [F] Fullscreen</div>
+  <div class="hint-toast">Press [Space] Pure Light | [5] Ambilight | [E] Strobe Boost | [1-4] Modes | [B] Bass Flash | [T] Test | [S] Source | [A] Algo | [F] Fullscreen</div>
 
   <div id="app-container">
     <header>
@@ -971,6 +1040,11 @@
               <span class="ambilight-dot"></span>
               <span id="ambilight-toggle-text">AMBILIGHT OFF</span>
             </button>
+            <button class="pill-btn strobe-toggle-btn active" id="btn-strobe-toggle" title="Toggle Fast-Edit Strobe / Shake Boost [F]">
+              <span class="strobe-dot"></span>
+              <span id="strobe-toggle-text">STROBE BOOST ON</span>
+            </button>
+            <div class="strobe-shake-badge" id="strobe-shake-badge">⚡ SHAKE BURST</div>
           </div>
           <div class="action-tools">
             <button class="action-btn" id="btn-clean">Light Only [Space]</button>
@@ -1004,11 +1078,13 @@
         bulbPulseDot.style.background = "#4ade80";
         bulbPulseDot.style.boxShadow = "0 0 10px #4ade80";
         const ping = Math.max(1, Math.round(bulb.ping_ms || 15));
-        bulbStatusText.textContent = `Room Light (${ping}ms)`;
+        const pps = (bulb.rate_pps !== undefined && bulb.rate_pps > 0) ? ` | ${bulb.rate_pps.toFixed(1)} pps` : "";
+        bulbStatusText.textContent = `Room Light (${ping}ms${pps})`;
       } else {
         bulbPulseDot.style.background = "#f87171";
         bulbPulseDot.style.boxShadow = "0 0 10px #f87171";
-        bulbStatusText.textContent = "Reconnecting...";
+        const rec = bulb.reconnects ? ` (#${bulb.reconnects})` : "";
+        bulbStatusText.textContent = `Sub-350ms Reconnecting${rec}...`;
       }
     }
 
@@ -1026,6 +1102,7 @@
           if (data.bands) currentBands = data.bands;
           if (data.mode) setModeActive(data.mode);
           if (data.bulb) updateBulbStatus(data.bulb);
+          if (data.screen_sync) updateStrobeUI(data.screen_sync);
           if (data.ambilight_enabled !== undefined) updateAmbilightUI(data.ambilight_enabled);
           if (data.algorithm) setAlgoActive(data.algorithm);
           if (data.source) setSourceActive(data.source);
@@ -1244,6 +1321,53 @@
 
     if (btnAmbilightToggle) {
       btnAmbilightToggle.addEventListener("click", toggleAmbilight);
+    }
+
+    // Strobe / Fast Edit Boost Controller (Async 2.0)
+    const btnStrobeToggle = document.getElementById("btn-strobe-toggle");
+    const strobeToggleText = document.getElementById("strobe-toggle-text");
+    const strobeShakeBadge = document.getElementById("strobe-shake-badge");
+    let strobeBoostEnabled = true;
+
+    function updateStrobeUI(syncState) {
+      if (!syncState) return;
+      if (syncState.strobe_boost !== undefined) {
+        strobeBoostEnabled = !!syncState.strobe_boost;
+        if (btnStrobeToggle && strobeToggleText) {
+          if (strobeBoostEnabled) {
+            btnStrobeToggle.classList.add("active");
+            strobeToggleText.textContent = "STROBE BOOST ON";
+          } else {
+            btnStrobeToggle.classList.remove("active");
+            strobeToggleText.textContent = "STROBE BOOST OFF";
+          }
+        }
+      }
+      if (strobeShakeBadge) {
+        if (syncState.strobe_active) {
+          strobeShakeBadge.classList.add("active");
+        } else {
+          strobeShakeBadge.classList.remove("active");
+        }
+      }
+    }
+
+    function toggleStrobeBoost() {
+      strobeBoostEnabled = !strobeBoostEnabled;
+      if (btnStrobeToggle && strobeToggleText) {
+        if (strobeBoostEnabled) {
+          btnStrobeToggle.classList.add("active");
+          strobeToggleText.textContent = "STROBE BOOST ON";
+        } else {
+          btnStrobeToggle.classList.remove("active");
+          strobeToggleText.textContent = "STROBE BOOST OFF";
+        }
+      }
+      sendCommand({ action: "set_strobe_boost", enabled: strobeBoostEnabled });
+    }
+
+    if (btnStrobeToggle) {
+      btnStrobeToggle.addEventListener("click", toggleStrobeBoost);
     }
 
     modeBtns.forEach(btn => {
@@ -1523,6 +1647,8 @@
         btnFlashToggle.click();
       } else if (e.code === "KeyT") {
         triggerTestFlash();
+      } else if (e.code === "KeyE") {
+        toggleStrobeBoost();
       } else if (e.code === "KeyS") {
         const nextSrc = currentSource === "speaker" ? "mic" : "speaker";
         setSourceActive(nextSrc);

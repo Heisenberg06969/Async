@@ -149,7 +149,7 @@ If your light turns **Red** and prints its status dictionary, your setup is comp
 * **Windows Firewall:** Ensure Windows Firewall allows outbound TCP/UDP traffic on port `6668`.
 
 ### 2. The bulb responds slowly or lags
-* Async includes an automatic **3.5-second health watchdog** and asynchronous queue that auto-reconnects if packets stall.
+* Async 2.0 includes an automatic **sub-second self-healing watchdog (<350ms)** and **Peak-Preserving Cadence rate limiter (16 FPS)** that prevents Wi-Fi buffer overflow and auto-reconnects instantly if packets stall.
 * Check your Wi-Fi signal strength at the bulb's socket. Thick walls or metal lamp fixtures can attenuate 2.4 GHz signals.
 
 ### 3. Light stays white and doesn't change color

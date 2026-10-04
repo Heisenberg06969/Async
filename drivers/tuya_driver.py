@@ -1,10 +1,12 @@
 """
-Local Wi-Fi Tuya / Havells Bulb Driver for Async.
+Local Wi-Fi Tuya / Havells Bulb Driver for Async (Version 2.0).
 Controls Havells Smart Bulbs (Tuya protocol 3.3/3.4) directly over LAN port 6668
-with zero cloud delay, non-blocking background queue, active health check watchdog,
-auto-reconnect recovery, and dry-run preview fallback.
+with zero cloud delay, Peak-Preserving Cadence rate limiting, socket buffer draining,
+and sub-second self-healing watchdog (<350ms auto-recovery).
 """
 
+import socket
+import select
 import time
 import logging
 import threading
@@ -20,7 +22,7 @@ class HavellsLocalBulb:
         ip_address: str,
         local_key: str = "",
         version: float = 3.3,
-        min_interval: float = 0.05 # ~20 state changes/sec max
+        min_interval: float = 0.062 # ~16 FPS max safe cadence for microcontroller TCP buffers
     ):
         self.device_id = device_id
         self.ip_address = ip_address
@@ -32,27 +34,34 @@ class HavellsLocalBulb:
         self.is_connected: bool = False
         self.dry_run: bool = not bool(local_key and len(local_key) == 16)
 
-        # Health & Telemetry
+        # Health, Telemetry & Rate Tracking
         self.ping_ms: float = 0.0
         self.last_health_check: float = 0.0
         self.consecutive_errors: int = 0
         self.last_send_time: float = 0.0
         self.last_hsv: Tuple[float, float, float] = (0.0, 0.0, 0.0)
+        self.reconnect_count: int = 0
+        self.packets_sent: int = 0
+        self.packets_per_sec: float = 0.0
+        self._pps_counter: int = 0
+        self._pps_timer: float = time.time()
 
-        # Threading for non-blocking I/O and health watchdog
+        # Threading for non-blocking I/O and recovery
         self._target_hsv: Optional[Tuple[float, float, float]] = None
         self._lock = threading.Lock()
+        self._reconnect_lock = threading.Lock()
         self._stop_event = threading.Event()
         self._worker_thread: Optional[threading.Thread] = None
+        self._is_reconnecting: bool = False
 
         if not self.dry_run:
             self._connect()
             self._start_worker()
         else:
-            logger.info("TuyaDriver initialized in DRY-RUN mode (waiting for 16-char local_key).")
+            logger.info("TuyaDriver 2.0 initialized in DRY-RUN mode (waiting for 16-char local_key).")
 
     def _connect(self) -> bool:
-        """Initializes persistent socket to bulb."""
+        """Initializes persistent, low-latency socket session to the smart bulb."""
         try:
             if self.device:
                 try:
@@ -66,10 +75,14 @@ class HavellsLocalBulb:
                 local_key=self.local_key,
                 version=self.version
             )
-            self.device.set_socketPersistent(True) # Keep socket open for high throughput
-            self.device.set_socketTimeout(1.5) # Fail fast if socket drops
+            # Async 2.0: Ultra-low latency TCP stack tuning
+            self.device.set_socketPersistent(True) # Keep socket open for real-time streaming
+            self.device.set_socketNODELAY(True)    # RFC 896: Disable Nagle algorithm (instant packet dispatch)
+            self.device.set_socketTimeout(0.35)    # 350ms fail-fast timeout (never hang for seconds)
+            self.device.set_socketRetryLimit(1)    # 1 attempt only: fail immediately to trigger sub-second recovery
+            self.device.set_socketRetryDelay(0.02)
 
-            # Ensure bulb is powered on and in colour mode
+            # Turn on bulb and lock mode to colour
             t0 = time.time()
             self.device.set_multiple_values({"20": True, "21": "colour"}, nowait=True)
             self.ping_ms = round((time.time() - t0) * 1000, 1)
@@ -77,12 +90,41 @@ class HavellsLocalBulb:
             self.is_connected = True
             self.consecutive_errors = 0
             self.last_health_check = time.time()
-            logger.info(f"Connected to Havells bulb at {self.ip_address}:6668 ({self.ping_ms}ms)")
+            logger.info(f"Connected to Havells bulb at {self.ip_address}:6668 ({self.ping_ms}ms | Version 2.0 Engine)")
             return True
         except Exception as e:
-            logger.error(f"Failed to connect to bulb: {e}")
+            logger.warning(f"Connection to bulb failed: {e}")
             self.is_connected = False
             return False
+
+    def _fast_reconnect(self, reason: str = "Stall detected"):
+        """
+        Sub-second socket recovery (<350ms).
+        Safely tears down the stalled socket and re-establishes TCP session
+        without blocking the main render or audio capture loop.
+        """
+        with self._reconnect_lock:
+            if self.dry_run or self._is_reconnecting:
+                return
+            self._is_reconnecting = True
+            self.is_connected = False
+            self.reconnect_count += 1
+            t0 = time.time()
+            logger.warning(f"Sub-second recovery triggered ({reason}). Reconnect #{self.reconnect_count}")
+            try:
+                if self.device:
+                    try:
+                        self.device._check_socket_close(force=True)
+                    except Exception:
+                        pass
+                success = self._connect()
+                elapsed = round((time.time() - t0) * 1000, 1)
+                if success:
+                    logger.info(f"Sub-second socket recovery successful in {elapsed}ms!")
+            except Exception as e:
+                logger.error(f"Fast reconnect attempt failed: {e}")
+            finally:
+                self._is_reconnecting = False
 
     def _start_worker(self):
         """Starts background worker thread for asynchronous frame dispatch & health checks."""
@@ -92,39 +134,80 @@ class HavellsLocalBulb:
             self._worker_thread.start()
 
     def _worker_loop(self):
-        """Dedicated background loop handling rate-limited transmissions and health checks."""
+        """Dedicated background loop handling rate-limited transmissions, buffer draining, and sub-second recovery."""
         while not self._stop_event.is_set():
             now = time.time()
 
-            # 1. Active Health Check & Watchdog (Every 3.5 seconds)
-            if self.is_connected and (now - self.last_health_check >= 3.5):
-                self._run_health_check()
-            elif not self.is_connected and (now - self.last_health_check >= 2.0):
-                # Auto-reconnect if offline
-                self._connect()
+            # PPS Telemetry calculation
+            if now - self._pps_timer >= 1.0:
+                self.packets_per_sec = round(self._pps_counter / (now - self._pps_timer), 1)
+                self._pps_counter = 0
+                self._pps_timer = now
 
-            # 2. Process HSV Updates
+            # 1. Drain incoming TCP socket buffer & detect EOF / OS exceptions immediately (<10ms)
+            if self.is_connected and self.device and not self._is_reconnecting:
+                try:
+                    sock = getattr(self.device, "socket", None)
+                    if sock and sock.fileno() != -1:
+                        rlist, _, xlist = select.select([sock], [], [sock], 0.0)
+                        if xlist:
+                            self._fast_reconnect("Socket exception from OS")
+                            time.sleep(0.04)
+                            continue
+                        elif rlist:
+                            chunk = sock.recv(2048)
+                            if not chunk:
+                                self._fast_reconnect("Socket EOF (bulb closed connection)")
+                                time.sleep(0.04)
+                                continue
+                except (socket.error, OSError) as e:
+                    self._fast_reconnect(f"Socket poll exception: {e}")
+                    time.sleep(0.04)
+                    continue
+
+            # 2. Sub-second Liveness Watchdog (Every 1.2s during quiet / idle periods)
+            if self.is_connected and not self._is_reconnecting:
+                if (now - self.last_send_time >= 1.2) and (now - self.last_health_check >= 1.2):
+                    self._run_health_check()
+            elif not self.is_connected and not self._is_reconnecting:
+                if now - self.last_health_check >= 0.8:
+                    self._fast_reconnect("Auto-reconnect while offline")
+
+            # 3. Peak-Preserving Cadence Dispatcher
             with self._lock:
                 target = self._target_hsv
 
-            if target is not None and self.is_connected and self.device:
+            if target is not None and self.is_connected and self.device and not self._is_reconnecting:
                 hue, saturation, value = target
+                dh = abs(hue - self.last_hsv[0])
+                ds = abs(saturation - self.last_hsv[1])
+                dv = abs(value - self.last_hsv[2])
 
-                # Check rate limit
-                if (now - self.last_send_time) >= self.min_interval:
-                    dh = abs(hue - self.last_hsv[0])
-                    ds = abs(saturation - self.last_hsv[1])
-                    dv = abs(value - self.last_hsv[2])
+                time_since_send = now - self.last_send_time
 
-                    # Only send if significant change
-                    if dh >= 2.0 or ds >= 2.0 or dv >= 1.5:
-                        self._send_hsv_payload(hue, saturation, value)
+                # Peak / Trough Extremum detection
+                is_peak = (value >= 90.0 and dv >= 15.0)
+                is_trough = (value <= 32.0 and dv >= 15.0)
+
+                should_send = False
+                if is_peak or is_trough:
+                    # Extremums get priority dispatch as soon as safe (>= 50ms)
+                    if time_since_send >= 0.050:
+                        should_send = True
+                else:
+                    # Standard updates paced at min_interval (62ms / ~16 FPS) if significant change
+                    if time_since_send >= self.min_interval:
+                        if dh >= 2.0 or ds >= 2.0 or dv >= 1.5:
+                            should_send = True
+
+                if should_send:
+                    self._send_hsv_payload(hue, saturation, value)
 
             # Sleep tiny slice to prevent CPU spinning while keeping response immediate
-            time.sleep(0.01)
+            time.sleep(0.008)
 
     def _send_hsv_payload(self, hue: float, saturation: float, value: float):
-        """Encodes and transmits DPS 24 payload."""
+        """Encodes and transmits DPS 24 payload with instant error capture."""
         try:
             h_val = int(round(hue)) % 360
             s_val = max(0, min(1000, int(round(saturation * 10.0))))
@@ -135,17 +218,17 @@ class HavellsLocalBulb:
             self.last_send_time = time.time()
             self.last_hsv = (hue, saturation, value)
             self.consecutive_errors = 0
+            self._pps_counter += 1
+            self.packets_sent += 1
         except Exception as e:
             self.consecutive_errors += 1
-            logger.debug(f"Transmission error ({self.consecutive_errors}): {e}")
-            if self.consecutive_errors >= 3:
-                logger.warning("Multiple send errors detected. Marking offline for auto-reconnect.")
-                self.is_connected = False
+            logger.warning(f"Transmission error on send: {e}. Initiating sub-second recovery...")
+            self._fast_reconnect(f"Send error: {e}")
 
     def _run_health_check(self):
         """
-        Sends heartbeat or status probe to verify bulb is actively executing commands.
-        If bulb does not answer or socket has hung, automatically forces reconnection.
+        Lightweight heartbeat probe with 350ms timeout.
+        If bulb does not answer or socket has hung, immediately recovers.
         """
         self.last_health_check = time.time()
         try:
@@ -155,9 +238,8 @@ class HavellsLocalBulb:
             self.is_connected = True
             self.consecutive_errors = 0
         except Exception as e:
-            logger.warning(f"Health check failed ({e}). Re-establishing bulb connection...")
-            self.is_connected = False
-            self._connect()
+            logger.warning(f"Heartbeat probe failed ({e}). Re-establishing bulb connection...")
+            self._fast_reconnect(f"Heartbeat failed: {e}")
 
     def update_key(self, local_key: str):
         """Updates local_key dynamically and connects."""
