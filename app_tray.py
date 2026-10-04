@@ -29,6 +29,7 @@ from PySide6.QtGui import (
     QIcon, QPixmap, QPainter, QColor, QPen, QBrush, QAction, QActionGroup, QFont
 )
 from PySide6.QtCore import Qt, QTimer, QObject, Signal
+from PySide6.QtNetwork import QLocalServer, QLocalSocket
 
 from core.audio_capture import AudioCapture
 from core.dsp_engine import DSPEngine
@@ -37,6 +38,12 @@ from core.screen_sync import ScreenSyncEngine
 from core.media_session import WindowsMediaSession
 from drivers.tuya_driver import HavellsLocalBulb
 from web.server import AsyncWebServer
+
+# Headless stdout/stderr protection when launched via pythonw.exe
+if sys.stdout is None:
+    sys.stdout = open(os.devnull, "w")
+if sys.stderr is None:
+    sys.stderr = open(os.devnull, "w")
 
 # Configure logging to file when running headless
 LOG_DIR = Path(__file__).parent / "logs"
@@ -47,6 +54,14 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s"
 )
 logger = logging.getLogger("Async.Tray")
+
+def uncaught_exception_handler(exc_type, exc_val, exc_tb):
+    if issubclass(exc_type, KeyboardInterrupt):
+        sys.__excepthook__(exc_type, exc_val, exc_tb)
+        return
+    logger.critical("Uncaught Exception in Async Tray App:", exc_info=(exc_type, exc_val, exc_tb))
+
+sys.excepthook = uncaught_exception_handler
 
 CONFIG_FILE = Path(__file__).parent / "config.json"
 
@@ -152,9 +167,12 @@ def create_orb_icon(r: int, g: int, b: int, is_connected: bool = True, is_strobe
 class AsyncTrayApp(QObject):
     state_updated = Signal()
 
-    def __init__(self, app: QApplication):
+    def __init__(self, app: QApplication, local_server: Optional[QLocalServer] = None):
         super().__init__()
         self.app = app
+        self.local_server = local_server
+        if self.local_server:
+            self.local_server.newConnection.connect(self._on_duplicate_instance)
         self.config = load_config()
 
         bulb_cfg = self.config.get("bulb", {})
@@ -232,8 +250,28 @@ class AsyncTrayApp(QObject):
         self.ui_timer.setInterval(100)
         self.ui_timer.timeout.connect(self._refresh_tray_state)
         self.ui_timer.start()
+        # Initial startup confirmation toast
+        self.tray_icon.showMessage(
+            "Async 2.0",
+            "Running silently in your System Tray.\nLeft-Click: Toggle Ambilight | Right-Click: Menu",
+            QSystemTrayIcon.Information,
+            3000
+        )
 
         logger.info("Async 2.0 System Tray successfully initialized.")
+
+    def _on_duplicate_instance(self):
+        """Called when a user attempts to launch a second instance of the app."""
+        if self.local_server:
+            conn = self.local_server.nextPendingConnection()
+            if conn:
+                conn.disconnectFromServer()
+        self.tray_icon.showMessage(
+            "Async 2.0",
+            "Async is already running in your System Tray!\nLeft-click the glowing icon to toggle Ambilight.",
+            QSystemTrayIcon.Information,
+            3000
+        )
 
     def _handle_web_command(self, cmd: dict):
         action = cmd.get("action")
@@ -656,12 +694,30 @@ class AsyncTrayApp(QObject):
 
         self.app.quit()
 
+LOCAL_SERVER_NAME = "Async20_Tray_App"
+
 def main():
     # Enforce single QApplication instance
     app = QApplication.instance() or QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False) # Do not exit when windows close; stay in tray
 
-    tray_app = AsyncTrayApp(app)
+    # 1. Check if another instance is already running
+    socket = QLocalSocket()
+    socket.connectToServer(LOCAL_SERVER_NAME)
+    if socket.waitForConnected(300):
+        # Notify the running instance to pop up a reminder
+        socket.write(b"PING\n")
+        socket.flush()
+        socket.waitForBytesWritten(300)
+        socket.disconnectFromServer()
+        sys.exit(0)
+
+    # 2. First instance: start single-instance local server
+    QLocalServer.removeServer(LOCAL_SERVER_NAME)
+    server = QLocalServer()
+    server.listen(LOCAL_SERVER_NAME)
+
+    tray_app = AsyncTrayApp(app, local_server=server)
     sys.exit(app.exec())
 
 if __name__ == "__main__":

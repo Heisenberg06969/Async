@@ -8,7 +8,10 @@ import asyncio
 import base64
 import threading
 import time
+import logging
 from typing import Dict, Any, Optional
+
+logger = logging.getLogger("Async.MediaSession")
 
 try:
     import winsdk.windows.media.control as wmc
@@ -60,7 +63,7 @@ class WindowsMediaSession:
         try:
             self._session_manager = await wmc.GlobalSystemMediaTransportControlsSessionManager.request_async()
         except Exception as e:
-            print(f"[MediaSession] Failed to get session manager: {e}")
+            logger.debug(f"Failed to get session manager: {e}")
             return
 
         while self._running:
