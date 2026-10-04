@@ -1,10 +1,25 @@
 @echo off
-title Async - Smart Lighting, Visualizer & Ambilight
+title Async 2.0 Launcher
 cd /d "%~dp0"
 chcp 65001 >nul
 
+:: Check if user specifically requested console Cava mode
+if "%1"=="--cli" goto launch_cli
+if "%1"=="-c" goto launch_cli
+
+:: By default, launch the silent, zero-friction Windows System Tray app
+where pythonw >nul 2>&1
+if %ERRORLEVEL% equ 0 (
+    start "" pythonw app_tray.py
+    exit /b 0
+) else if exist "%LOCALAPPDATA%\Programs\Python\Python312\pythonw.exe" (
+    start "" "%LOCALAPPDATA%\Programs\Python\Python312\pythonw.exe" app_tray.py
+    exit /b 0
+)
+
+:launch_cli
 echo ========================================================
-echo   Async: Smart Lighting, Cava Visualizer & Ambilight
+echo   Async 2.0: Terminal Cava Visualizer Mode
 echo ========================================================
 echo.
 
@@ -18,14 +33,4 @@ if %ERRORLEVEL% equ 0 (
     echo Please install Python 3.10+ or add it to your system PATH.
     pause
     exit /b 1
-)
-
-if %ERRORLEVEL% neq 0 (
-    echo.
-    echo [ERROR] Async stopped unexpectedly with error code %ERRORLEVEL%.
-    pause
-) else (
-    echo.
-    echo Async closed cleanly.
-    pause
 )

@@ -132,9 +132,15 @@ Start Async with a single click:
 ```cmd
 start.bat
 ```
-*(Or run `python main.py` in your terminal)*
+*(Or double-click `Async.vbs` for 100% silent, windowless background launch!)*
 
-Async will start the terminal Cava equalizer, connect to your smart bulb, and automatically open the **Web Room Simulator** at `http://localhost:5050`.
+Async docks right into your **Windows System Tray** (notification area next to the clock):
+* **Glowing Tray Icon:** Real-time color orb mimics your smart bulb's live color and strobe state.
+* **Left-Click:** Instantly toggle between **Ambilight Screen Sync** and **Audio Reactive Mode**.
+* **Right-Click Context Menu:** Switch lighting modes, audio decision algorithms, sound output devices, strobe boosts, and toggle "Run on Windows Startup".
+* **Double-Click:** Opens the edge-to-edge **Web Room Simulator** on demand at `http://localhost:5050`.
+
+> **Prefer the terminal Cava visualizer?** Run `start.bat --cli` or `python main.py`.
 
 ---
 
@@ -182,11 +188,13 @@ Async works with over **80% of consumer smart lighting** on the market through d
 Async/
 ├── config.example.json            <-- Template configuration
 ├── config.json                    <-- Your local bulb IP, keys, and DSP settings (git-ignored)
-├── start.bat / run.bat            <-- 1-click Windows batch launchers (UTF-8, smart Python detection)
+├── start.bat / run.bat            <-- 1-click Windows batch launchers (launches silent Tray by default)
+├── Async.vbs                      <-- Zero-terminal windowless VBScript launcher
+├── app_tray.py                    <-- Windows System Tray application (PySide6 native menu & live glowing icon)
 ├── run.ps1                        <-- PowerShell launcher
 ├── requirements.txt               <-- Python dependencies
 ├── GUIDE.md                       <-- Step-by-step Hardware & Brand Setup Guide
-├── main.py                        <-- Main loop, Cava terminal UI & orchestration
+├── main.py                        <-- Terminal Cava UI & standalone orchestration
 │
 ├── core/
 │   ├── audio_capture.py           <-- Windows WASAPI loopback capture & LIFO zero-latency queue
