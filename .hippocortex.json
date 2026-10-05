@@ -1,0 +1,114 @@
+{
+  "project_id": "Async",
+  "name": "Async Audio-Reactive Lighting & Screen Ambilight",
+  "category": "active_project",
+  "status": "in_development",
+  "summary": "Sub-30ms real-time Windows WASAPI loopback audio capture and real-time screen ambilight with dynamic FFT multi-band lighting dispatch to Tuya IoT devices, wrapped in a windowless Windows System Tray application.",
+  "ports": [
+    5050,
+    6667,
+    6668
+  ],
+  "tech_stack": [
+    "Python",
+    "PySide6",
+    "WASAPI",
+    "pyaudiowpatch",
+    "NumPy",
+    "TinyTuya",
+    "aiohttp",
+    "mss",
+    "Pillow"
+  ],
+  "hardware_budget": {
+    "vram_max_mb": 200,
+    "requires_gpu": false
+  },
+  "solved_bugs": [
+    {
+      "id": "BUG-ASYNC-01",
+      "symptom": "WASAPI audio input buffer underrun causing audio crackles during high CPU loads.",
+      "root_cause": "Sampling buffer inadequate when UI thread blocked the audio capture callback.",
+      "solution_pattern": "Use 1024-sample ring buffer with thread-safe lock-free dequeue and decouple audio loop from Tuya network calls.",
+      "tags": [
+        "audio",
+        "wasapi",
+        "buffer",
+        "threading",
+        "dsp"
+      ]
+    },
+    {
+      "id": "BUG-ASYNC-02",
+      "symptom": "Tuya UDP packet flood causing bulb connection dropouts.",
+      "root_cause": "Sending raw 60 FPS RGB updates over saturated 2.4 GHz local Wi-Fi UDP sockets.",
+      "solution_pattern": "Throttle Tuya local LAN dispatch to 25-30 FPS with delta-threshold filtering (only send if HSV delta > 2%).",
+      "tags": [
+        "tuya",
+        "iot",
+        "udp",
+        "rate-limiting",
+        "wifi"
+      ]
+    },
+    {
+      "id": "BUG-ASYNC-03",
+      "symptom": "System tray icon rendered as faint grey circle with a green dot and caused Windows 11 taskbar redraw glitches.",
+      "root_cause": "Periodic 100ms UI timer in app_tray.py continuously called tray_icon.setIcon(create_orb_icon()), overwriting the static brand logo on every tick and triggering frequent OS taskbar redraws.",
+      "solution_pattern": "Decouple static branding from dynamic painting: display official multi-resolution transparent brand icon as default with zero timer overhead; only invoke dynamic orb painter if user explicitly switches to 'Dynamic Live RGB Orb' via tray context menu.",
+      "tags": [
+        "pyside6",
+        "system-tray",
+        "windows11",
+        "ui-timer",
+        "icon-rendering"
+      ]
+    },
+    {
+      "id": "BUG-ASYNC-04",
+      "symptom": "Startup launcher popped up a black terminal console window and required navigating deep directory trees.",
+      "root_cause": "Standard python.exe launches with a console subsystem window allocated by Windows.",
+      "solution_pattern": "Provide an Async.vbs WScript.Shell runner executing pythonw.exe with window style 0 (SW_HIDE) and redirect headless sys.stdout/sys.stderr to os.devnull.",
+      "tags": [
+        "pythonw",
+        "vbs",
+        "wscript",
+        "windowless",
+        "system-tray",
+        "startup"
+      ]
+    },
+    {
+      "id": "BUG-ASYNC-05",
+      "symptom": "Raw square brand image with black outer canvas caused visual distortion and lack of transparency when scaled across taskbar and web dashboards.",
+      "root_cause": "Generated raster art had solid background canvas and non-standard dimensions instead of alpha-channel transparent squircle tiles.",
+      "solution_pattern": "Created standardized master asset suite: multi-resolution Windows icon (icon.ico from 16x16 to 256x256), antialiased squircle tiles, Android Chrome icons, Apple touch icons, and site.webmanifest with dynamic aiohttp route handlers.",
+      "tags": [
+        "assets",
+        "branding",
+        "ico",
+        "transparency",
+        "webmanifest",
+        "aiohttp"
+      ]
+    }
+  ],
+  "architectural_rules": [
+    "Decouple audio sampling loop from Tuya UDP socket dispatch.",
+    "Strict local LAN control (sub-40ms latency, zero cloud dependency).",
+    "Always wrap sounddevice / pyaudiowpatch stream closures in finally blocks.",
+    "Run background services windowless via pythonw.exe or VBS launcher to prevent command prompt popups.",
+    "Never overwrite static system tray brand icon in periodic timers unless dynamic live orb mode is explicitly selected.",
+    "Enforce single-instance tray execution using QLocalServer/QLocalSocket ('Async20_Tray_App') to prevent duplicate background runners.",
+    "Serve static web assets (favicons, manifests, logos) dynamically via aiohttp route handlers from a centralized assets/ directory."
+  ],
+  "dependencies": [
+    "NumPy",
+    "TinyTuya",
+    "pyaudiowpatch",
+    "PySide6",
+    "aiohttp",
+    "mss",
+    "Pillow"
+  ]
+}

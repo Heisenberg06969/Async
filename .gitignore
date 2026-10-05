@@ -10,7 +10,6 @@ devs.csv
 snapshot.json
 tuya-raw.json
 tinytuya.json
-.hippocortex.json
 
 # Virtual Environments
 .venv/
