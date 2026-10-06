@@ -40,14 +40,19 @@ class HavellsLocalBulb:
         self.consecutive_errors: int = 0
         self.last_send_time: float = 0.0
         self.last_hsv: Tuple[float, float, float] = (0.0, 0.0, 0.0)
+        self.last_white: Tuple[int, int] = (100, 500)
         self.reconnect_count: int = 0
         self.packets_sent: int = 0
         self.packets_per_sec: float = 0.0
         self._pps_counter: int = 0
         self._pps_timer: float = time.time()
 
-        # Threading for non-blocking I/O and recovery
+        # Operational States (Power, Mode, Targets)
+        self.is_power_on: bool = True
+        self.current_mode: str = "colour"
+        self._mode_switched: bool = False
         self._target_hsv: Optional[Tuple[float, float, float]] = None
+        self._target_white: Optional[Tuple[int, int]] = None
         self._lock = threading.Lock()
         self._reconnect_lock = threading.Lock()
         self._stop_event = threading.Event()
@@ -175,38 +180,52 @@ class HavellsLocalBulb:
 
             # 3. Peak-Preserving Cadence Dispatcher
             with self._lock:
-                target = self._target_hsv
+                target_mode = self.current_mode
+                mode_switched = self._mode_switched
+                self._mode_switched = False
+                target_hsv = self._target_hsv
+                target_white = self._target_white
 
-            if target is not None and self.is_connected and self.device and not self._is_reconnecting:
-                hue, saturation, value = target
-                dh = abs(hue - self.last_hsv[0])
-                ds = abs(saturation - self.last_hsv[1])
-                dv = abs(value - self.last_hsv[2])
+            if self.is_connected and self.device and not self._is_reconnecting:
+                if target_mode == "white" and target_white is not None:
+                    bright, temp = target_white
+                    db = abs(bright - self.last_white[0])
+                    dt = abs(temp - self.last_white[1])
+                    time_since_send = now - self.last_send_time
 
-                time_since_send = now - self.last_send_time
+                    if mode_switched or (time_since_send >= 0.050 and (db >= 1 or dt >= 4)):
+                        self._send_white_payload(bright, temp, force_mode=mode_switched)
 
-                # Peak / Trough Extremum detection
-                is_peak = (value >= 90.0 and dv >= 15.0)
-                is_trough = (value <= 32.0 and dv >= 15.0)
+                elif target_mode == "colour" and target_hsv is not None:
+                    hue, saturation, value = target_hsv
+                    dh = abs(hue - self.last_hsv[0])
+                    ds = abs(saturation - self.last_hsv[1])
+                    dv = abs(value - self.last_hsv[2])
 
-                should_send = False
-                if is_peak or is_trough:
-                    # Extremums get priority dispatch as soon as safe (>= 50ms)
-                    if time_since_send >= 0.050:
+                    time_since_send = now - self.last_send_time
+
+                    # Peak / Trough Extremum detection
+                    is_peak = (value >= 90.0 and dv >= 15.0)
+                    is_trough = (value <= 32.0 and dv >= 15.0)
+
+                    should_send = False
+                    if mode_switched:
                         should_send = True
-                else:
-                    # Standard updates paced at min_interval (62ms / ~16 FPS) if significant change
-                    if time_since_send >= self.min_interval:
-                        if dh >= 2.0 or ds >= 2.0 or dv >= 1.5:
+                    elif is_peak or is_trough:
+                        if time_since_send >= 0.050:
                             should_send = True
+                    else:
+                        if time_since_send >= self.min_interval:
+                            if dh >= 2.0 or ds >= 2.0 or dv >= 1.5:
+                                should_send = True
 
-                if should_send:
-                    self._send_hsv_payload(hue, saturation, value)
+                    if should_send:
+                        self._send_hsv_payload(hue, saturation, value, force_mode=mode_switched)
 
             # Sleep tiny slice to prevent CPU spinning while keeping response immediate
             time.sleep(0.008)
 
-    def _send_hsv_payload(self, hue: float, saturation: float, value: float):
+    def _send_hsv_payload(self, hue: float, saturation: float, value: float, force_mode: bool = False):
         """Encodes and transmits DPS 24 payload with instant error capture."""
         try:
             h_val = int(round(hue)) % 360
@@ -214,7 +233,11 @@ class HavellsLocalBulb:
             v_val = max(0, min(1000, int(round(value * 10.0))))
             hex_str = f"{h_val:04x}{s_val:04x}{v_val:04x}"
 
-            self.device.set_value(24, hex_str, nowait=True)
+            if force_mode:
+                self.device.set_multiple_values({"20": True, "21": "colour", "24": hex_str}, nowait=True)
+            else:
+                self.device.set_value(24, hex_str, nowait=True)
+
             self.last_send_time = time.time()
             self.last_hsv = (hue, saturation, value)
             self.consecutive_errors = 0
@@ -224,6 +247,65 @@ class HavellsLocalBulb:
             self.consecutive_errors += 1
             logger.warning(f"Transmission error on send: {e}. Initiating sub-second recovery...")
             self._fast_reconnect(f"Send error: {e}")
+
+    def _send_white_payload(self, brightness: int, colourtemp: int, force_mode: bool = False):
+        """Encodes and transmits DP 21='white', DP 22 (brightness), DP 23 (temp)."""
+        try:
+            b_val = max(10, min(1000, int(brightness * 10)))
+            t_val = max(0, min(1000, int(colourtemp)))
+            payload = {"20": True, "22": b_val, "23": t_val}
+            if force_mode:
+                payload["21"] = "white"
+
+            self.device.set_multiple_values(payload, nowait=True)
+            self.last_send_time = time.time()
+            self.last_white = (brightness, colourtemp)
+            self.consecutive_errors = 0
+            self._pps_counter += 1
+            self.packets_sent += 1
+        except Exception as e:
+            self.consecutive_errors += 1
+            logger.warning(f"Transmission error on white send: {e}. Initiating sub-second recovery...")
+            self._fast_reconnect(f"White send error: {e}")
+
+    def set_power(self, power: bool):
+        """Sets hardware bulb power (DP 20: True/False)."""
+        self.is_power_on = power
+        if self.dry_run or not self.device or not self.is_connected:
+            return
+        try:
+            self.device.set_value(20, bool(power), nowait=True)
+            logger.info(f"Bulb power set to {'ON' if power else 'OFF'} (DP 20)")
+        except Exception as e:
+            logger.warning(f"Error setting bulb power: {e}")
+            self._fast_reconnect(f"Power toggle error: {e}")
+
+    def set_white(self, brightness: int = 100, colourtemp: int = 500):
+        """
+        Sets bulb to white mode (DP 21: 'white').
+        brightness: 1 to 100 (percentage)
+        colourtemp: 0 to 1000 (0=Warm 2700K, 1000=Cold 6500K)
+        """
+        if self.dry_run:
+            return
+        with self._lock:
+            if self.current_mode != "white":
+                self.current_mode = "white"
+                self._mode_switched = True
+            self._target_white = (max(1, min(100, int(brightness))), max(0, min(1000, int(colourtemp))))
+
+    def set_hsv(self, hue: float, saturation: float, value: float):
+        """
+        Non-blocking thread-safe HSV update.
+        Pushes target state to background worker thread immediately.
+        """
+        if self.dry_run:
+            return
+        with self._lock:
+            if self.current_mode != "colour":
+                self.current_mode = "colour"
+                self._mode_switched = True
+            self._target_hsv = (hue, saturation, value)
 
     def _run_health_check(self):
         """

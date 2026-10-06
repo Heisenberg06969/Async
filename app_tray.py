@@ -38,6 +38,7 @@ from core.screen_sync import ScreenSyncEngine
 from core.media_session import WindowsMediaSession
 from drivers.tuya_driver import HavellsLocalBulb
 from web.server import AsyncWebServer
+from core.light_control_panel import LightControlPanel, kelvin_to_rgb
 
 # Headless stdout/stderr protection when launched via pythonw.exe
 if sys.stdout is None:
@@ -210,6 +211,8 @@ class AsyncTrayApp(QObject):
         self.speaker_devices_cache = []
         self._lock = threading.Lock()
         self._is_running = True
+        self.control_panel: Optional[LightControlPanel] = None
+        self.current_sync_mode: str = self.initial_mode
 
         # Initialize Web Server (runs in background for on-demand simulator)
         self.web_server = AsyncWebServer(port=5050, on_command=self._handle_web_command)
@@ -355,11 +358,11 @@ class AsyncTrayApp(QObject):
             self.media.previous_track()
 
     def _build_tray_menu(self):
-        """Constructs the native Windows right-click tray menu."""
+        """Constructs the native Windows right-click tray menu (100% emoji-free)."""
         self.tray_menu.clear()
 
         # 1. Status Header
-        self.act_status = QAction("⚡ Async 2.0 (Connecting...)", self.tray_menu)
+        self.act_status = QAction("Async 2.0 (Connecting...)", self.tray_menu)
         font = QFont()
         font.setBold(True)
         self.act_status.setFont(font)
@@ -368,29 +371,39 @@ class AsyncTrayApp(QObject):
 
         self.tray_menu.addSeparator()
 
-        # 2. Light Power Toggle
-        self.act_power = QAction("💡 Smart Light Power", self.tray_menu)
+        # 2. Open Light Controls (White Chart, Color Chart, Power ON/OFF)
+        act_open_controls = QAction("Color & White Controls...", self.tray_menu)
+        act_open_controls.triggered.connect(self.show_control_panel)
+        font_ctrl = QFont()
+        font_ctrl.setBold(True)
+        act_open_controls.setFont(font_ctrl)
+        self.tray_menu.addAction(act_open_controls)
+
+        # 3. Light Power Toggle
+        self.act_power = QAction(f"Light Power: {'ON' if self.light_power else 'OFF'}", self.tray_menu)
         self.act_power.setCheckable(True)
         self.act_power.setChecked(self.light_power)
         self.act_power.toggled.connect(self._on_toggle_power)
         self.tray_menu.addAction(self.act_power)
 
-        # 3. Ambilight Screen Sync Toggle
-        self.act_ambilight = QAction("🖥️ Ambilight Screen Sync", self.tray_menu)
+        self.tray_menu.addSeparator()
+
+        # 4. Ambilight Screen Sync Toggle
+        self.act_ambilight = QAction("Ambilight Screen Sync", self.tray_menu)
         self.act_ambilight.setCheckable(True)
         self.act_ambilight.setChecked(self.mapper.mode == "screen_ambilight")
         self.act_ambilight.toggled.connect(self._on_toggle_ambilight_action)
         self.tray_menu.addAction(self.act_ambilight)
 
-        # 4. Fast-Edit Strobe Boost Toggle
-        self.act_strobe = QAction("⚡ Fast-Edit Strobe Boost", self.tray_menu)
+        # 5. Fast-Edit Strobe Boost Toggle
+        self.act_strobe = QAction("Fast-Edit Strobe Boost", self.tray_menu)
         self.act_strobe.setCheckable(True)
         self.act_strobe.setChecked(self.screen_sync.strobe_boost)
         self.act_strobe.toggled.connect(lambda chk: self.screen_sync.set_strobe_boost(chk))
         self.tray_menu.addAction(self.act_strobe)
 
-        # 5. Bass Flash Toggle
-        self.act_flash = QAction("💥 Bass Flash on Kicks", self.tray_menu)
+        # 6. Bass Flash Toggle
+        self.act_flash = QAction("Bass Flash on Kicks", self.tray_menu)
         self.act_flash.setCheckable(True)
         self.act_flash.setChecked(self.mapper.bass_flash_enabled)
         self.act_flash.toggled.connect(lambda chk: self.mapper.set_bass_flash(chk))
@@ -398,8 +411,8 @@ class AsyncTrayApp(QObject):
 
         self.tray_menu.addSeparator()
 
-        # 6. Lighting Modes Submenu
-        modes_menu = self.tray_menu.addMenu("🎨 Lighting Modes")
+        # 7. Lighting Modes Submenu
+        modes_menu = self.tray_menu.addMenu("Lighting Modes")
         self.mode_group = QActionGroup(self)
         self.mode_group.setExclusive(True)
 
@@ -420,8 +433,8 @@ class AsyncTrayApp(QObject):
             modes_menu.addAction(act)
             self.mode_actions[m_key] = act
 
-        # 7. Decision Algorithms Submenu
-        algos_menu = self.tray_menu.addMenu("🎵 Music Algorithms")
+        # 8. Decision Algorithms Submenu
+        algos_menu = self.tray_menu.addMenu("Music Algorithms")
         self.algo_group = QActionGroup(self)
         self.algo_group.setExclusive(True)
 
@@ -442,14 +455,14 @@ class AsyncTrayApp(QObject):
             algos_menu.addAction(act)
             self.algo_actions[a_key] = act
 
-        # 8. Audio Output Device Submenu
-        self.devices_menu = self.tray_menu.addMenu("🔊 Audio Device")
+        # 9. Audio Output Device Submenu
+        self.devices_menu = self.tray_menu.addMenu("Audio Device")
         self._populate_audio_devices_menu()
 
         self.tray_menu.addSeparator()
 
-        # 9. Tray Icon Style Submenu
-        icon_menu = self.tray_menu.addMenu("🎨 Tray Icon Style")
+        # 10. Tray Icon Style Submenu
+        icon_menu = self.tray_menu.addMenu("Tray Icon Style")
         self.act_style_brand = QAction("Official Async Logo", icon_menu)
         self.act_style_brand.setCheckable(True)
         self.act_style_brand.setChecked(self.icon_style == "brand")
@@ -468,13 +481,13 @@ class AsyncTrayApp(QObject):
         icon_menu.addAction(self.act_style_brand)
         icon_menu.addAction(self.act_style_orb)
 
-        # 10. Open Room Simulator
-        act_open_sim = QAction("🌐 Open Room Simulator (Web)", self.tray_menu)
+        # 11. Open Room Simulator
+        act_open_sim = QAction("Open Room Simulator (Web)", self.tray_menu)
         act_open_sim.triggered.connect(self._open_web_simulator)
         self.tray_menu.addAction(act_open_sim)
 
-        # 10. Run on Windows Startup Toggle
-        self.act_startup = QAction("🚀 Run on Windows Startup", self.tray_menu)
+        # 12. Run on Windows Startup Toggle
+        self.act_startup = QAction("Run on Windows Startup", self.tray_menu)
         self.act_startup.setCheckable(True)
         self.act_startup.setChecked(is_startup_enabled())
         self.act_startup.toggled.connect(lambda chk: set_startup_enabled(chk))
@@ -482,8 +495,8 @@ class AsyncTrayApp(QObject):
 
         self.tray_menu.addSeparator()
 
-        # 11. Exit
-        act_exit = QAction("❌ Exit Async", self.tray_menu)
+        # 13. Exit
+        act_exit = QAction("Exit Async", self.tray_menu)
         act_exit.triggered.connect(self.quit_app)
         self.tray_menu.addAction(act_exit)
 
@@ -517,22 +530,83 @@ class AsyncTrayApp(QObject):
 
     def _on_toggle_power(self, checked: bool):
         self.light_power = checked
-        if not self.light_power:
-            # Turn bulb dark (0% value)
-            self.bulb.set_hsv(self.current_hsv[0], self.current_hsv[1], 0.0)
-            self.tray_icon.showMessage("Async 2.0", "Light output paused", QSystemTrayIcon.Information, 1000)
-        else:
-            self.tray_icon.showMessage("Async 2.0", "Light output resumed", QSystemTrayIcon.Information, 1000)
+        self.bulb.set_power(checked)
+        if self.control_panel:
+            self.control_panel.set_power_state(checked)
+        if hasattr(self, "act_power"):
+            self.act_power.setText(f"Light Power: {'ON' if checked else 'OFF'}")
+            self.act_power.setChecked(checked)
+        status_msg = "Light Power: ON" if checked else "Light Power: OFF"
+        self.tray_icon.showMessage("Async 2.0", status_msg, QSystemTrayIcon.Information, 1000)
+
+    def _on_white_changed(self, brightness: int, temp: int):
+        self.current_sync_mode = "static_white"
+        self.bulb.set_white(brightness, temp)
+        r, g, b = kelvin_to_rgb(int(2700 + (temp / 1000.0) * (6500 - 2700)))
+        scale = max(0.05, brightness / 100.0)
+        with self._lock:
+            self.current_rgb = (int(r * scale), int(g * scale), int(b * scale))
+
+    def _on_color_changed(self, r: int, g: int, b: int):
+        self.current_sync_mode = "static_color"
+        c = QColor(r, g, b)
+        hue = float(c.hue()) if c.hue() >= 0 else 0.0
+        sat = float(c.saturationF() * 100.0)
+        val = float(self.control_panel.current_brightness if self.control_panel else 100)
+        self.bulb.set_hsv(hue, sat, val)
+        with self._lock:
+            scale = val / 100.0
+            self.current_rgb = (int(r * scale), int(g * scale), int(b * scale))
+            self.current_hsv = (hue, sat, val)
+
+    def _on_mode_selected(self, mode: str):
+        self.current_sync_mode = mode
+        if mode == "screen_ambilight":
+            self.mapper.set_mode("screen_ambilight")
+            self.screen_sync.enable()
+            self.act_ambilight.setChecked(True)
+            self.tray_icon.showMessage("Async 2.0", "Ambilight ON (Screen Sync)", QSystemTrayIcon.Information, 1200)
+        elif mode in self.mapper.MODES:
+            self.mapper.set_mode(mode)
+            self.screen_sync.disable()
+            self.act_ambilight.setChecked(False)
+            if mode in self.mode_actions:
+                self.mode_actions[mode].setChecked(True)
+            self.tray_icon.showMessage("Async 2.0", f"Mode: {mode.replace('_', ' ').title()}", QSystemTrayIcon.Information, 1200)
+
+    def show_control_panel(self):
+        """Displays the sleek OLED Light Control Panel (Color Chart, White Chart, Power ON/OFF)."""
+        if self.control_panel is None:
+            self.control_panel = LightControlPanel()
+            self.control_panel.powerToggled.connect(self._on_toggle_power)
+            self.control_panel.whiteChanged.connect(self._on_white_changed)
+            self.control_panel.colorChanged.connect(self._on_color_changed)
+            self.control_panel.modeSelected.connect(self._on_mode_selected)
+
+        if self.control_panel.isVisible():
+            self.control_panel.hide()
+            return
+
+        screen = QApplication.primaryScreen().availableGeometry()
+        x = max(10, screen.right() - self.control_panel.width() - 16)
+        y = max(10, screen.bottom() - self.control_panel.height() - 16)
+        self.control_panel.move(x, y)
+        self.control_panel.set_power_state(self.light_power)
+        self.control_panel.show()
+        self.control_panel.raise_()
+        self.control_panel.activateWindow()
 
     def _on_toggle_ambilight_action(self, checked: bool):
         if checked:
             if self.mapper.mode != "screen_ambilight":
                 self.mapper._last_audio_mode = self.mapper.mode
+            self.current_sync_mode = "screen_ambilight"
             self.mapper.set_mode("screen_ambilight")
             self.screen_sync.enable()
             self.tray_icon.showMessage("Async 2.0", "Ambilight ON (Screen Sync)", QSystemTrayIcon.Information, 1200)
         else:
             target = getattr(self.mapper, "_last_audio_mode", "bass_pulse")
+            self.current_sync_mode = target
             self.mapper.set_mode(target)
             self.screen_sync.disable()
             self.tray_icon.showMessage("Async 2.0", f"Audio Sync: {target.upper()}", QSystemTrayIcon.Information, 1200)
@@ -541,6 +615,7 @@ class AsyncTrayApp(QObject):
         """Toggles Ambilight and syncs menu checkmark state."""
         is_on = self.mapper.toggle_ambilight()
         if is_on:
+            self.current_sync_mode = "screen_ambilight"
             self.screen_sync.enable()
             self.act_ambilight.setChecked(True)
             self.tray_icon.showMessage("Async 2.0", "Ambilight ON (Screen Sync)", QSystemTrayIcon.Information, 1200)
@@ -548,9 +623,11 @@ class AsyncTrayApp(QObject):
             self.screen_sync.disable()
             self.act_ambilight.setChecked(False)
             target = getattr(self.mapper, "_last_audio_mode", "bass_pulse")
+            self.current_sync_mode = target
             self.tray_icon.showMessage("Async 2.0", f"Audio Sync: {target.upper()}", QSystemTrayIcon.Information, 1200)
 
     def _set_audio_mode(self, mode: str):
+        self.current_sync_mode = mode
         self.mapper.set_mode(mode)
         self.screen_sync.disable()
         self.act_ambilight.setChecked(False)
@@ -582,8 +659,8 @@ class AsyncTrayApp(QObject):
     def _on_tray_activated(self, reason):
         """Handles mouse clicks on the system tray icon."""
         if reason == QSystemTrayIcon.Trigger:
-            # Single Left-Click: Toggle Ambilight Screen Sync vs Audio Mode
-            self._toggle_ambilight()
+            # Single Left-Click: Open or toggle Light Control Panel
+            self.show_control_panel()
         elif reason == QSystemTrayIcon.DoubleClick:
             # Double Click: Open Room Simulator Dashboard
             self._open_web_simulator()
@@ -614,14 +691,18 @@ class AsyncTrayApp(QObject):
                 rgb, hsv = self.mapper.update(metrics)
 
             with self._lock:
-                self.current_rgb = rgb
-                self.current_hsv = hsv
+                if self.current_sync_mode not in ("static_white", "static_color"):
+                    self.current_rgb = rgb
+                    self.current_hsv = hsv
                 self.current_bands = bands
                 self.latest_metrics = metrics
+                broadcast_rgb = self.current_rgb
+                broadcast_hsv = self.current_hsv
 
             # 2. Transmit to Bulb if Light Power is ON
             if self.light_power:
-                self.bulb.set_hsv(hsv[0], hsv[1], hsv[2])
+                if self.current_sync_mode not in ("static_white", "static_color"):
+                    self.bulb.set_hsv(hsv[0], hsv[1], hsv[2])
 
             # 3. Broadcast to Web Room Simulator
             now = time.time()
@@ -641,11 +722,11 @@ class AsyncTrayApp(QObject):
                 last_track_key = track_key
 
             self.web_server.broadcast({
-                "rgb": rgb,
-                "hsv": [round(hsv[0], 1), round(hsv[1], 1), round(hsv[2], 1)],
+                "rgb": broadcast_rgb,
+                "hsv": [round(broadcast_hsv[0], 1), round(broadcast_hsv[1], 1), round(broadcast_hsv[2], 1)],
                 "bands": [round(float(b), 3) for b in bands],
-                "mode": self.mapper.mode,
-                "ambilight_enabled": (self.mapper.mode == "screen_ambilight"),
+                "mode": self.mapper.mode if self.current_sync_mode not in ("static_white", "static_color") else self.current_sync_mode,
+                "ambilight_enabled": (self.mapper.mode == "screen_ambilight" and self.current_sync_mode not in ("static_white", "static_color")),
                 "algorithm": self.mapper.algorithm,
                 "bulb": {
                     "connected": self.bulb.is_connected,
@@ -714,21 +795,21 @@ class AsyncTrayApp(QObject):
 
         # Status action in menu
         if self.bulb.dry_run:
-            status_text = "⚡ Async 2.0 (Preview / Dry-Run)"
+            status_text = "Async 2.0 (Preview / Dry-Run)"
         elif is_connected:
-            status_text = f"● Bulb Connected ({ping:.0f}ms | {pps:.1f} pps)"
+            status_text = f"Bulb Connected ({ping:.0f}ms | {pps:.1f} pps)"
         else:
-            status_text = f"◌ Bulb Reconnecting (#{self.bulb.reconnect_count})..."
+            status_text = f"Bulb Reconnecting (#{self.bulb.reconnect_count})..."
         self.act_status.setText(status_text)
 
         # Update Tooltip
         mode_label = "Screen Ambilight" if mode_name == "screen_ambilight" else mode_name.replace('_', ' ').title()
-        strobe_str = " | ⚡ Strobe Active" if is_strobe else ""
+        strobe_str = " | Strobe Active" if is_strobe else ""
         self.tray_icon.setToolTip(
             f"Async 2.0\n"
             f"Mode: {mode_label}{strobe_str}\n"
             f"Bulb: {'Connected' if is_connected else 'Offline'} ({ping:.0f}ms)\n"
-            f"Left-Click: Toggle Ambilight | Right-Click: Menu"
+            f"Left-Click: Light Controls | Right-Click: Menu"
         )
 
         # Sync menu checkmarks if changed from web UI

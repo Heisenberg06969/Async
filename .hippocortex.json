@@ -100,7 +100,8 @@
     "Run background services windowless via pythonw.exe or VBS launcher to prevent command prompt popups.",
     "Never overwrite static system tray brand icon in periodic timers unless dynamic live orb mode is explicitly selected.",
     "Enforce single-instance tray execution using QLocalServer/QLocalSocket ('Async20_Tray_App') to prevent duplicate background runners.",
-    "Serve static web assets (favicons, manifests, logos) dynamically via aiohttp route handlers from a centralized assets/ directory."
+    "Serve static web assets (favicons, manifests, logos) dynamically via aiohttp route handlers from a centralized assets/ directory.",
+    "Dual White and Color Spectrum Control with Master Power Toggle"
   ],
   "dependencies": [
     "NumPy",
