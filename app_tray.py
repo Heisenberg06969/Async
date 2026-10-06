@@ -213,6 +213,7 @@ class AsyncTrayApp(QObject):
         self._is_running = True
         self.control_panel: Optional[LightControlPanel] = None
         self.current_sync_mode: str = self.initial_mode
+        self.master_brightness: int = 100
 
         # Initialize Web Server (runs in background for on-demand simulator)
         self.web_server = AsyncWebServer(port=5050, on_command=self._handle_web_command)
@@ -273,6 +274,12 @@ class AsyncTrayApp(QObject):
         self.ui_timer.setInterval(100)
         self.ui_timer.timeout.connect(self._refresh_tray_state)
         self.ui_timer.start()
+
+        # Telemetry Timer (Feeds real-time FFT spectrum & monitor preview to panel at 30 FPS)
+        self.telemetry_timer = QTimer(self)
+        self.telemetry_timer.setInterval(33)
+        self.telemetry_timer.timeout.connect(self._on_telemetry_tick)
+        self.telemetry_timer.start()
         # Initial startup confirmation toast
         self.tray_icon.showMessage(
             "Async 2.0",
@@ -560,38 +567,96 @@ class AsyncTrayApp(QObject):
             self.current_hsv = (hue, sat, val)
 
     def _on_mode_selected(self, mode: str):
-        self.current_sync_mode = mode
-        if mode == "screen_ambilight":
+        if mode == "solid":
+            self.screen_sync.disable()
+            self.act_ambilight.setChecked(False)
+            if self.control_panel:
+                if self.control_panel.current_solid_subtab == "white":
+                    self.current_sync_mode = "static_white"
+                    raw_temp = int(round(self.control_panel.white_chart.temp_ratio * 1000))
+                    self.bulb.set_white(self.control_panel.current_brightness, raw_temp)
+                else:
+                    self.current_sync_mode = "static_color"
+                    c = QColor.fromHsvF(self.control_panel.color_chart.hue / 360.0, self.control_panel.color_chart.sat, 1.0)
+                    self.bulb.set_hsv(self.control_panel.color_chart.hue, self.control_panel.color_chart.sat * 100.0, float(self.control_panel.current_brightness))
+            self.tray_icon.showMessage("Async 2.0", "Solid Light Mode Active", QSystemTrayIcon.Information, 1000)
+        elif mode == "audio":
+            self.screen_sync.disable()
+            self.act_ambilight.setChecked(False)
+            target = getattr(self.control_panel, "current_audio_profile", "bass_pulse") if self.control_panel else "bass_pulse"
+            self.current_sync_mode = target
+            self.mapper.set_mode(target)
+            if target in self.mode_actions:
+                self.mode_actions[target].setChecked(True)
+            self.tray_icon.showMessage("Async 2.0", f"Audio Sync: {target.replace('_', ' ').title()}", QSystemTrayIcon.Information, 1000)
+        elif mode == "screen_ambilight":
+            self.current_sync_mode = "screen_ambilight"
             self.mapper.set_mode("screen_ambilight")
             self.screen_sync.enable()
             self.act_ambilight.setChecked(True)
-            self.tray_icon.showMessage("Async 2.0", "Ambilight ON (Screen Sync)", QSystemTrayIcon.Information, 1200)
-        elif mode in self.mapper.MODES:
-            self.mapper.set_mode(mode)
-            self.screen_sync.disable()
-            self.act_ambilight.setChecked(False)
-            if mode in self.mode_actions:
-                self.mode_actions[mode].setChecked(True)
-            self.tray_icon.showMessage("Async 2.0", f"Mode: {mode.replace('_', ' ').title()}", QSystemTrayIcon.Information, 1200)
+            self.tray_icon.showMessage("Async 2.0", "Ambilight ON (Screen Sync)", QSystemTrayIcon.Information, 1000)
+
+    def _on_audio_profile_selected(self, profile: str):
+        self.screen_sync.disable()
+        self.act_ambilight.setChecked(False)
+        self.current_sync_mode = profile
+        self.mapper.set_mode(profile)
+        if profile in self.mode_actions:
+            self.mode_actions[profile].setChecked(True)
+        self.tray_icon.showMessage("Async 2.0", f"Profile: {profile.replace('_', ' ').title()}", QSystemTrayIcon.Information, 1000)
+
+    def _on_brightness_changed(self, brightness: int):
+        self.master_brightness = brightness
+        if self.current_sync_mode == "static_white":
+            if self.control_panel:
+                temp = int(round(self.control_panel.white_chart.temp_ratio * 1000))
+                self.bulb.set_white(brightness, temp)
+        elif self.current_sync_mode == "static_color":
+            if self.control_panel:
+                h = self.control_panel.color_chart.hue
+                s = self.control_panel.color_chart.sat * 100.0
+                self.bulb.set_hsv(h, s, float(brightness))
+
+    def _on_telemetry_tick(self):
+        if self.control_panel and self.control_panel.isVisible():
+            with self._lock:
+                bands = self.current_bands.copy()
+                rgb = self.current_rgb
+            self.control_panel.update_live_telemetry(bands, rgb)
+            self.control_panel.header.set_connected_state(self.bulb.is_connected)
 
     def show_control_panel(self):
-        """Displays the sleek OLED Light Control Panel (Color Chart, White Chart, Power ON/OFF)."""
+        """Displays the sleek OLED Light Control Panel."""
         if self.control_panel is None:
             self.control_panel = LightControlPanel()
             self.control_panel.powerToggled.connect(self._on_toggle_power)
             self.control_panel.whiteChanged.connect(self._on_white_changed)
             self.control_panel.colorChanged.connect(self._on_color_changed)
             self.control_panel.modeSelected.connect(self._on_mode_selected)
+            self.control_panel.audioProfileSelected.connect(self._on_audio_profile_selected)
+            self.control_panel.brightnessChanged.connect(self._on_brightness_changed)
 
         if self.control_panel.isVisible():
             self.control_panel.hide()
             return
 
+        # Synchronize UI state with current active app mode
+        if self.current_sync_mode == "screen_ambilight":
+            self.control_panel.set_primary_mode("screen_ambilight")
+        elif self.current_sync_mode in ("static_white", "static_color"):
+            self.control_panel.set_primary_mode("solid")
+        else:
+            self.control_panel.set_primary_mode("audio")
+            if hasattr(self.control_panel, "_set_audio_profile"):
+                self.control_panel._set_audio_profile(self.current_sync_mode)
+
+        self.control_panel.set_power_state(self.light_power)
+        self.control_panel.header.set_connected_state(self.bulb.is_connected)
+
         screen = QApplication.primaryScreen().availableGeometry()
         x = max(10, screen.right() - self.control_panel.width() - 16)
         y = max(10, screen.bottom() - self.control_panel.height() - 16)
         self.control_panel.move(x, y)
-        self.control_panel.set_power_state(self.light_power)
         self.control_panel.show()
         self.control_panel.raise_()
         self.control_panel.activateWindow()
@@ -702,7 +767,9 @@ class AsyncTrayApp(QObject):
             # 2. Transmit to Bulb if Light Power is ON
             if self.light_power:
                 if self.current_sync_mode not in ("static_white", "static_color"):
-                    self.bulb.set_hsv(hsv[0], hsv[1], hsv[2])
+                    scale = max(0.01, self.master_brightness / 100.0)
+                    scaled_v = max(1.0, min(100.0, float(hsv[2]) * scale))
+                    self.bulb.set_hsv(hsv[0], hsv[1], scaled_v)
 
             # 3. Broadcast to Web Room Simulator
             now = time.time()
