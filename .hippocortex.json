@@ -91,6 +91,20 @@
         "webmanifest",
         "aiohttp"
       ]
+    },
+    {
+      "id": "BUG-ASYNC-06",
+      "symptom": "When switched to Solid Color -> White Palette, the physical bulb remained locked out from returning to Color Spectrum, Audio Sync, or Screen Ambilight, and audio output endpoints could not be switched from the control panel.",
+      "root_cause": "1. Duplicate set_hsv method at the end of TuyaDriver class overwritten the implementation and bypassed current_mode and _mode_switched tracking. 2. Tuya 3.5 firmware dropped single bundled packets containing DP 21 ('colour') and DP 24 (HSV hex) simultaneously. 3. LightControlPanel lacked an interactive audio device switcher to trigger Windows WASAPI endpoint transitions.",
+      "solution_pattern": "1. Removed duplicate set_hsv method in TuyaDriver. 2. Enforced reliable 2-step packet sequence for Tuya 3.5 mode switches (DP 20/21 set first, followed by DP 24 or DP 22/23 payload) and invalidated last_white/last_hsv delta caches. 3. Added interactive btn_audio_device dropdown pill with deviceSelected signal connected to AudioCapture.switch_device() in app_tray.py.",
+      "tags": [
+        "tuya",
+        "white-palette",
+        "mode-switching",
+        "tuya-3.5",
+        "audio-switcher",
+        "pyside6"
+      ]
     }
   ],
   "architectural_rules": [
@@ -102,7 +116,9 @@
     "Enforce single-instance tray execution using QLocalServer/QLocalSocket ('Async20_Tray_App') to prevent duplicate background runners.",
     "Serve static web assets (favicons, manifests, logos) dynamically via aiohttp route handlers from a centralized assets/ directory.",
     "Dual White and Color Spectrum Control with Master Power Toggle",
-    "Three-Tier Studio Mode Architecture and Impeccable Hardware UI Deck"
+    "Three-Tier Studio Mode Architecture and Impeccable Hardware UI Deck",
+    "Tuya 3.5 Protocol: Always split mode switch DP 21 and payload DP 24 into two consecutive calls to prevent hardware firmware packet drops.",
+    "Invalidate hardware delta cache (last_white, last_hsv) immediately on mode transitions to guarantee initial frame transmission."
   ],
   "dependencies": [
     "NumPy",
