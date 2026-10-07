@@ -182,7 +182,6 @@ class HavellsLocalBulb:
             with self._lock:
                 target_mode = self.current_mode
                 mode_switched = self._mode_switched
-                self._mode_switched = False
                 target_hsv = self._target_hsv
                 target_white = self._target_white
 
@@ -194,7 +193,10 @@ class HavellsLocalBulb:
                     time_since_send = now - self.last_send_time
 
                     if mode_switched or (time_since_send >= 0.050 and (db >= 1 or dt >= 4)):
-                        self._send_white_payload(bright, temp, force_mode=mode_switched)
+                        if self._send_white_payload(bright, temp, force_mode=mode_switched):
+                            if mode_switched:
+                                with self._lock:
+                                    self._mode_switched = False
 
                 elif target_mode == "colour" and target_hsv is not None:
                     hue, saturation, value = target_hsv
@@ -220,12 +222,15 @@ class HavellsLocalBulb:
                                 should_send = True
 
                     if should_send:
-                        self._send_hsv_payload(hue, saturation, value, force_mode=mode_switched)
+                        if self._send_hsv_payload(hue, saturation, value, force_mode=mode_switched):
+                            if mode_switched:
+                                with self._lock:
+                                    self._mode_switched = False
 
             # Sleep tiny slice to prevent CPU spinning while keeping response immediate
             time.sleep(0.008)
 
-    def _send_hsv_payload(self, hue: float, saturation: float, value: float, force_mode: bool = False):
+    def _send_hsv_payload(self, hue: float, saturation: float, value: float, force_mode: bool = False) -> bool:
         """Encodes and transmits DPS 24 payload with instant error capture."""
         try:
             h_val = int(round(hue)) % 360
@@ -234,7 +239,8 @@ class HavellsLocalBulb:
             hex_str = f"{h_val:04x}{s_val:04x}{v_val:04x}"
 
             if force_mode:
-                self.device.set_multiple_values({"20": True, "21": "colour", "24": hex_str}, nowait=True)
+                self.device.set_multiple_values({"20": True, "21": "colour"}, nowait=True)
+                self.device.set_value(24, hex_str, nowait=True)
             else:
                 self.device.set_value(24, hex_str, nowait=True)
 
@@ -243,30 +249,37 @@ class HavellsLocalBulb:
             self.consecutive_errors = 0
             self._pps_counter += 1
             self.packets_sent += 1
+            return True
         except Exception as e:
             self.consecutive_errors += 1
             logger.warning(f"Transmission error on send: {e}. Initiating sub-second recovery...")
             self._fast_reconnect(f"Send error: {e}")
+            return False
 
-    def _send_white_payload(self, brightness: int, colourtemp: int, force_mode: bool = False):
+    def _send_white_payload(self, brightness: int, colourtemp: int, force_mode: bool = False) -> bool:
         """Encodes and transmits DP 21='white', DP 22 (brightness), DP 23 (temp)."""
         try:
             b_val = max(10, min(1000, int(brightness * 10)))
             t_val = max(0, min(1000, int(colourtemp)))
-            payload = {"20": True, "22": b_val, "23": t_val}
-            if force_mode:
-                payload["21"] = "white"
 
-            self.device.set_multiple_values(payload, nowait=True)
+            if force_mode:
+                self.device.set_multiple_values({"20": True, "21": "white"}, nowait=True)
+                self.device.set_multiple_values({"22": b_val, "23": t_val}, nowait=True)
+            else:
+                payload = {"20": True, "22": b_val, "23": t_val}
+                self.device.set_multiple_values(payload, nowait=True)
+
             self.last_send_time = time.time()
             self.last_white = (brightness, colourtemp)
             self.consecutive_errors = 0
             self._pps_counter += 1
             self.packets_sent += 1
+            return True
         except Exception as e:
             self.consecutive_errors += 1
             logger.warning(f"Transmission error on white send: {e}. Initiating sub-second recovery...")
             self._fast_reconnect(f"White send error: {e}")
+            return False
 
     def set_power(self, power: bool):
         """Sets hardware bulb power (DP 20: True/False)."""
@@ -292,6 +305,8 @@ class HavellsLocalBulb:
             if self.current_mode != "white":
                 self.current_mode = "white"
                 self._mode_switched = True
+                self.last_white = (-999, -999)
+                self.last_hsv = (-999.0, -999.0, -999.0)
             self._target_white = (max(1, min(100, int(brightness))), max(0, min(1000, int(colourtemp))))
 
     def set_hsv(self, hue: float, saturation: float, value: float):
@@ -305,6 +320,8 @@ class HavellsLocalBulb:
             if self.current_mode != "colour":
                 self.current_mode = "colour"
                 self._mode_switched = True
+                self.last_white = (-999, -999)
+                self.last_hsv = (-999.0, -999.0, -999.0)
             self._target_hsv = (hue, saturation, value)
 
     def _run_health_check(self):
@@ -330,16 +347,6 @@ class HavellsLocalBulb:
             self.dry_run = False
             self._connect()
             self._start_worker()
-
-    def set_hsv(self, hue: float, saturation: float, value: float):
-        """
-        Non-blocking thread-safe HSV update.
-        Pushes target state to background worker thread immediately.
-        """
-        if self.dry_run:
-            return
-        with self._lock:
-            self._target_hsv = (hue, saturation, value)
 
     def close(self):
         """Cleanly stops background worker thread and closes socket."""

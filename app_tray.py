@@ -528,11 +528,16 @@ class AsyncTrayApp(QObject):
             group.addAction(act)
             self.devices_menu.addAction(act)
 
+        if self.control_panel:
+            self.control_panel.set_audio_devices(devices, current_name)
+
     def _select_audio_device(self, dev_name: str):
         self.audio.select_speaker_device(dev_name)
         self.dsp.set_sample_rate(self.audio.sample_rate)
         self.dsp.reset()
         self._populate_audio_devices_menu()
+        if self.control_panel:
+            self.control_panel.set_audio_devices(self.speaker_devices_cache or self.audio.get_speaker_devices(), dev_name)
         self.tray_icon.showMessage("Async Audio", f"Switched to: {dev_name}", QSystemTrayIcon.Information, 1200)
 
     def _on_toggle_power(self, checked: bool):
@@ -588,12 +593,21 @@ class AsyncTrayApp(QObject):
             self.mapper.set_mode(target)
             if target in self.mode_actions:
                 self.mode_actions[target].setChecked(True)
+            with self._lock:
+                hsv = self.current_hsv
+            scale = max(0.01, self.master_brightness / 100.0)
+            scaled_v = max(1.0, min(100.0, float(hsv[2]) * scale))
+            self.bulb.set_hsv(hsv[0], hsv[1], scaled_v)
             self.tray_icon.showMessage("Async 2.0", f"Audio Sync: {target.replace('_', ' ').title()}", QSystemTrayIcon.Information, 1000)
         elif mode == "screen_ambilight":
             self.current_sync_mode = "screen_ambilight"
             self.mapper.set_mode("screen_ambilight")
             self.screen_sync.enable()
             self.act_ambilight.setChecked(True)
+            _, hsv = self.screen_sync.get_color()
+            scale = max(0.01, self.master_brightness / 100.0)
+            scaled_v = max(1.0, min(100.0, float(hsv[2]) * scale))
+            self.bulb.set_hsv(hsv[0], hsv[1], scaled_v)
             self.tray_icon.showMessage("Async 2.0", "Ambilight ON (Screen Sync)", QSystemTrayIcon.Information, 1000)
 
     def _on_audio_profile_selected(self, profile: str):
@@ -603,6 +617,11 @@ class AsyncTrayApp(QObject):
         self.mapper.set_mode(profile)
         if profile in self.mode_actions:
             self.mode_actions[profile].setChecked(True)
+        with self._lock:
+            hsv = self.current_hsv
+        scale = max(0.01, self.master_brightness / 100.0)
+        scaled_v = max(1.0, min(100.0, float(hsv[2]) * scale))
+        self.bulb.set_hsv(hsv[0], hsv[1], scaled_v)
         self.tray_icon.showMessage("Async 2.0", f"Profile: {profile.replace('_', ' ').title()}", QSystemTrayIcon.Information, 1000)
 
     def _on_brightness_changed(self, brightness: int):
@@ -634,6 +653,7 @@ class AsyncTrayApp(QObject):
             self.control_panel.colorChanged.connect(self._on_color_changed)
             self.control_panel.modeSelected.connect(self._on_mode_selected)
             self.control_panel.audioProfileSelected.connect(self._on_audio_profile_selected)
+            self.control_panel.deviceSelected.connect(self._select_audio_device)
             self.control_panel.brightnessChanged.connect(self._on_brightness_changed)
 
         if self.control_panel.isVisible():
@@ -643,13 +663,21 @@ class AsyncTrayApp(QObject):
         # Synchronize UI state with current active app mode
         if self.current_sync_mode == "screen_ambilight":
             self.control_panel.set_primary_mode("screen_ambilight")
-        elif self.current_sync_mode in ("static_white", "static_color"):
+        elif self.current_sync_mode == "static_white":
             self.control_panel.set_primary_mode("solid")
+            self.control_panel._switch_solid_subtab("white")
+        elif self.current_sync_mode == "static_color":
+            self.control_panel.set_primary_mode("solid")
+            self.control_panel._switch_solid_subtab("color")
         else:
             self.control_panel.set_primary_mode("audio")
             if hasattr(self.control_panel, "_set_audio_profile"):
                 self.control_panel._set_audio_profile(self.current_sync_mode)
 
+        self.control_panel.set_audio_devices(
+            self.speaker_devices_cache or self.audio.get_speaker_devices(),
+            self.audio.get_clean_device_name()
+        )
         self.control_panel.set_power_state(self.light_power)
         self.control_panel.header.set_connected_state(self.bulb.is_connected)
 
@@ -668,12 +696,27 @@ class AsyncTrayApp(QObject):
             self.current_sync_mode = "screen_ambilight"
             self.mapper.set_mode("screen_ambilight")
             self.screen_sync.enable()
+            if self.control_panel:
+                self.control_panel.set_primary_mode("screen_ambilight")
+            _, hsv = self.screen_sync.get_color()
+            scale = max(0.01, self.master_brightness / 100.0)
+            scaled_v = max(1.0, min(100.0, float(hsv[2]) * scale))
+            self.bulb.set_hsv(hsv[0], hsv[1], scaled_v)
             self.tray_icon.showMessage("Async 2.0", "Ambilight ON (Screen Sync)", QSystemTrayIcon.Information, 1200)
         else:
             target = getattr(self.mapper, "_last_audio_mode", "bass_pulse")
             self.current_sync_mode = target
             self.mapper.set_mode(target)
             self.screen_sync.disable()
+            if self.control_panel:
+                self.control_panel.set_primary_mode("audio")
+                if hasattr(self.control_panel, "_set_audio_profile"):
+                    self.control_panel._set_audio_profile(target)
+            with self._lock:
+                hsv = self.current_hsv
+            scale = max(0.01, self.master_brightness / 100.0)
+            scaled_v = max(1.0, min(100.0, float(hsv[2]) * scale))
+            self.bulb.set_hsv(hsv[0], hsv[1], scaled_v)
             self.tray_icon.showMessage("Async 2.0", f"Audio Sync: {target.upper()}", QSystemTrayIcon.Information, 1200)
 
     def _toggle_ambilight(self):
@@ -683,12 +726,27 @@ class AsyncTrayApp(QObject):
             self.current_sync_mode = "screen_ambilight"
             self.screen_sync.enable()
             self.act_ambilight.setChecked(True)
+            if self.control_panel:
+                self.control_panel.set_primary_mode("screen_ambilight")
+            _, hsv = self.screen_sync.get_color()
+            scale = max(0.01, self.master_brightness / 100.0)
+            scaled_v = max(1.0, min(100.0, float(hsv[2]) * scale))
+            self.bulb.set_hsv(hsv[0], hsv[1], scaled_v)
             self.tray_icon.showMessage("Async 2.0", "Ambilight ON (Screen Sync)", QSystemTrayIcon.Information, 1200)
         else:
             self.screen_sync.disable()
             self.act_ambilight.setChecked(False)
             target = getattr(self.mapper, "_last_audio_mode", "bass_pulse")
             self.current_sync_mode = target
+            if self.control_panel:
+                self.control_panel.set_primary_mode("audio")
+                if hasattr(self.control_panel, "_set_audio_profile"):
+                    self.control_panel._set_audio_profile(target)
+            with self._lock:
+                hsv = self.current_hsv
+            scale = max(0.01, self.master_brightness / 100.0)
+            scaled_v = max(1.0, min(100.0, float(hsv[2]) * scale))
+            self.bulb.set_hsv(hsv[0], hsv[1], scaled_v)
             self.tray_icon.showMessage("Async 2.0", f"Audio Sync: {target.upper()}", QSystemTrayIcon.Information, 1200)
 
     def _set_audio_mode(self, mode: str):
@@ -696,6 +754,15 @@ class AsyncTrayApp(QObject):
         self.mapper.set_mode(mode)
         self.screen_sync.disable()
         self.act_ambilight.setChecked(False)
+        if self.control_panel:
+            self.control_panel.set_primary_mode("audio")
+            if hasattr(self.control_panel, "_set_audio_profile"):
+                self.control_panel._set_audio_profile(mode)
+        with self._lock:
+            hsv = self.current_hsv
+        scale = max(0.01, self.master_brightness / 100.0)
+        scaled_v = max(1.0, min(100.0, float(hsv[2]) * scale))
+        self.bulb.set_hsv(hsv[0], hsv[1], scaled_v)
         self.tray_icon.showMessage("Async 2.0", f"Mode: {mode.replace('_', ' ').title()}", QSystemTrayIcon.Information, 1200)
 
     def _open_web_simulator(self):
