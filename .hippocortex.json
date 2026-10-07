@@ -105,6 +105,19 @@
         "audio-switcher",
         "pyside6"
       ]
+    },
+    {
+      "id": "BUG-ASYNC-07",
+      "symptom": "Disruptive Windows OS notification banners/balloons fired across desktop upon every mode switch, preset click, and tray action.",
+      "root_cause": "app_tray.py invoked QSystemTrayIcon.showMessage() for all user interactions, cluttering the Windows Action Center and interrupting full-screen workflows.",
+      "solution_pattern": "Eliminated all QSystemTrayIcon.showMessage() calls and replaced them with a lightweight, floating in-GUI ConfirmationToast badge in LightControlPanel that auto-hides after exactly 500ms without triggering layout shifts.",
+      "tags": [
+        "notifications",
+        "toast",
+        "in-gui-feedback",
+        "pyside6",
+        "ux-refinement"
+      ]
     }
   ],
   "architectural_rules": [
@@ -118,7 +131,9 @@
     "Dual White and Color Spectrum Control with Master Power Toggle",
     "Three-Tier Studio Mode Architecture and Impeccable Hardware UI Deck",
     "Tuya 3.5 Protocol: Always split mode switch DP 21 and payload DP 24 into two consecutive calls to prevent hardware firmware packet drops.",
-    "Invalidate hardware delta cache (last_white, last_hsv) immediately on mode transitions to guarantee initial frame transmission."
+    "Invalidate hardware delta cache (last_white, last_hsv) immediately on mode transitions to guarantee initial frame transmission.",
+    "Replace intrusive OS notifications with transient (500ms) in-GUI confirmation badges to keep desktop clean and avoid Windows Action Center clutter.",
+    "Enforce 100% pure ASCII text across all UI elements and notifications without emoji decorations."
   ],
   "dependencies": [
     "NumPy",

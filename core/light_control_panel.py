@@ -72,6 +72,27 @@ def get_color_name(hue: float, sat: float) -> str:
 # Custom Precision Widgets
 # =========================================================================
 
+class ConfirmationToast(QLabel):
+    """Floating high-contrast in-GUI confirmation badge (auto-hides after 500ms)."""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setAlignment(Qt.AlignCenter)
+        self.setStyleSheet("""
+            QLabel {
+                background-color: #0F172A;
+                color: #38BDF8;
+                font-family: 'Segoe UI', system-ui, sans-serif;
+                font-size: 11px;
+                font-weight: 700;
+                letter-spacing: 0.5px;
+                padding: 4px 16px;
+                border: 1px solid rgba(56, 189, 248, 0.55);
+                border-radius: 12px;
+            }
+        """)
+        self.hide()
+
+
 class HeaderBar(QWidget):
     """Window header with branding, connection pill, power toggle, and close."""
     closeClicked = Signal()
@@ -1153,10 +1174,32 @@ class LightControlPanel(QDialog):
 
         main_layout.addWidget(self.card)
 
+        # In-GUI Confirmation Toast Pill (auto-hides after 500ms / 0.5s)
+        self.toast_pill = ConfirmationToast(self.card)
+        self._toast_timer = QTimer(self)
+        self._toast_timer.setSingleShot(True)
+        self._toast_timer.timeout.connect(self.toast_pill.hide)
+
         # Initialize defaults
         self._switch_solid_subtab("color")
         self._set_audio_profile("bass_pulse")
         self._refresh_profile_buttons()
+
+    def show_confirmation(self, text: str, duration_ms: int = 500):
+        """Displays a clean in-GUI confirmation badge for 500ms without triggering OS notifications."""
+        self.toast_pill.setText(text)
+        self.toast_pill.adjustSize()
+        card_w = self.card.width() if self.card.width() > 0 else 390
+        pill_w = self.toast_pill.width()
+        x = max(10, (card_w - pill_w) // 2)
+        y = 52
+        self.toast_pill.move(x, y)
+        self.toast_pill.show()
+        self.toast_pill.raise_()
+
+        self._toast_timer.stop()
+        self._toast_timer.setInterval(duration_ms)
+        self._toast_timer.start()
 
     def _apply_dark_theme(self):
         self.setStyleSheet("""
@@ -1178,6 +1221,7 @@ class LightControlPanel(QDialog):
         if mode == "solid":
             self.stack_modes.setCurrentIndex(0)
             self.modeSelected.emit("solid")
+            self.show_confirmation("Solid Light Mode", 500)
             if self.current_solid_subtab == "color":
                 c = QColor.fromHsvF(self.color_chart.hue / 360.0, self.color_chart.sat, 1.0)
                 self.colorChanged.emit(c.red(), c.green(), c.blue())
@@ -1188,9 +1232,11 @@ class LightControlPanel(QDialog):
             self.stack_modes.setCurrentIndex(1)
             self.modeSelected.emit("audio")
             self.audioProfileSelected.emit(self.current_audio_profile)
+            self.show_confirmation(f"Audio Reactive ({self.current_audio_profile.replace('_', ' ').title()})", 500)
         elif mode == "screen_ambilight":
             self.stack_modes.setCurrentIndex(2)
             self.modeSelected.emit("screen_ambilight")
+            self.show_confirmation("Screen Ambilight ON", 500)
 
     def _switch_solid_subtab(self, subtab: str):
         self.current_solid_subtab = subtab
@@ -1228,6 +1274,7 @@ class LightControlPanel(QDialog):
             self.bright_slider.set_color(c)
             self.modeSelected.emit("solid")
             self.colorChanged.emit(c.red(), c.green(), c.blue())
+            self.show_confirmation("Palette: Color Spectrum", 500)
         else:
             self.btn_sub_color.setStyleSheet(inactive_css)
             self.btn_sub_white.setStyleSheet(active_css)
@@ -1237,6 +1284,7 @@ class LightControlPanel(QDialog):
             self.bright_slider.set_color(QColor(r, g, b))
             self.modeSelected.emit("solid")
             self.whiteChanged.emit(self.current_brightness, raw_temp)
+            self.show_confirmation("Palette: White Temperature", 500)
 
     # ---------------- Audio Device Switching ----------------
 
@@ -1296,6 +1344,7 @@ class LightControlPanel(QDialog):
             display_name = display_name[:20] + ".."
         self.btn_audio_device.setText(display_name)
         self.deviceSelected.emit(dev_name)
+        self.show_confirmation(f"Audio: {display_name}", 500)
 
     # ---------------- Color & White Callbacks ----------------
 
@@ -1317,6 +1366,7 @@ class LightControlPanel(QDialog):
         self.color_chart.set_hsv(c.hue(), c.saturationF())
         self._on_color_chart_changed(c.red(), c.green(), c.blue())
         self._on_color_coords_changed(c.hue(), c.saturationF())
+        self.show_confirmation(f"Color: {self.lbl_color_name.text()}", 500)
 
     def _save_custom_swatch(self):
         c = QColor.fromHsvF(self.color_chart.hue / 360.0, self.color_chart.sat, 1.0)
@@ -1326,6 +1376,7 @@ class LightControlPanel(QDialog):
         # Insert before '+' button
         idx = max(0, self.color_swatches_layout.count() - 2)
         self.color_swatches_layout.insertWidget(idx, btn)
+        self.show_confirmation("Swatch Saved", 500)
 
     def _on_white_chart_changed(self, temp_val: int):
         self.lbl_white_raw.setText(f"DP 23: {temp_val}")
@@ -1349,6 +1400,7 @@ class LightControlPanel(QDialog):
         self.white_chart.set_temperature(temp_val)
         self._on_white_chart_changed(temp_val)
         self._on_white_kelvin_changed(self.white_chart.get_kelvin())
+        self.show_confirmation(self.lbl_white_name.text(), 500)
 
     # ---------------- Audio Profile Logic ----------------
 
@@ -1356,6 +1408,7 @@ class LightControlPanel(QDialog):
         self.current_audio_profile = profile_key
         self._refresh_profile_buttons()
         self.audioProfileSelected.emit(profile_key)
+        self.show_confirmation(f"Profile: {profile_key.replace('_', ' ').title()}", 500)
 
     def _refresh_profile_buttons(self):
         active_css = """
@@ -1403,6 +1456,7 @@ class LightControlPanel(QDialog):
     def _on_power_toggled(self, power_state: bool):
         self.is_power_on = power_state
         self.powerToggled.emit(power_state)
+        self.show_confirmation("Power: ON" if power_state else "Power: OFF", 500)
 
     def set_power_state(self, power_state: bool):
         self.is_power_on = power_state
