@@ -139,7 +139,7 @@ start.bat
 Async docks right into your **Windows System Tray** (notification area next to the clock):
 * **Glowing Tray Icon:** Real-time color orb mimics your smart bulb's live color and strobe state.
 * **Left-Click:** Instantly toggle between **Ambilight Screen Sync** and **Audio Reactive Mode**.
-* **Right-Click Context Menu:** Switch lighting modes, audio decision algorithms, sound output devices, strobe boosts, and toggle "Run on Windows Startup".
+* **Right-Click Context Menu:** Switch lighting modes, audio decision algorithms, strobe boosts, and toggle "Run on Windows Startup".
 * **Double-Click:** Opens the edge-to-edge **Web Room Simulator** on demand at `http://localhost:5050`.
 
 > **Prefer the terminal Cava visualizer?** Run `start.bat --cli` or `python main.py`.
@@ -208,9 +208,6 @@ Async/
 ├── drivers/
 │   ├── tuya_driver.py             <-- Async 2.0 driver: Peak-preserving cadence & sub-350ms recovery
 │   └── wled_driver.py             <-- UDP DDP streaming driver for ESP32 addressable strips
-│
-├── tools/
-│   └── SoundVolumeView.exe        <-- NirSoft Windows audio endpoint switcher
 │
 └── web/
     ├── index.html                 <-- Windows 11 Fluent room simulator & interactive controller

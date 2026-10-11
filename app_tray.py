@@ -207,8 +207,6 @@ class AsyncTrayApp(QObject):
         self.current_hsv: Tuple[float, float, float] = (83.0, 95.0, 82.0)
         self.current_bands = np.zeros(self.num_bands, dtype=np.float32)
         self.latest_metrics: Dict[str, Any] = {}
-        self.devices_refresh_flag = [True]
-        self.speaker_devices_cache = []
         self._lock = threading.Lock()
         self._is_running = True
         self.control_panel: Optional[LightControlPanel] = None
@@ -324,13 +322,6 @@ class AsyncTrayApp(QObject):
                 self.audio.switch_source(new_src)
                 self.dsp.set_sample_rate(self.audio.sample_rate)
                 self.dsp.reset()
-                self.devices_refresh_flag[0] = True
-        elif action == "set_speaker_device":
-            target_dev = cmd.get("device")
-            self.audio.select_speaker_device(target_dev)
-            self.dsp.set_sample_rate(self.audio.sample_rate)
-            self.dsp.reset()
-            self.devices_refresh_flag[0] = True
         elif action == "set_bass_flash":
             self.mapper.set_bass_flash(cmd.get("enabled", True))
         elif action == "set_flash_intensity":
@@ -452,10 +443,6 @@ class AsyncTrayApp(QObject):
             algos_menu.addAction(act)
             self.algo_actions[a_key] = act
 
-        # 9. Audio Output Device Submenu
-        self.devices_menu = self.tray_menu.addMenu("Audio Device")
-        self._populate_audio_devices_menu()
-
         self.tray_menu.addSeparator()
 
         # 10. Tray Icon Style Submenu
@@ -498,38 +485,6 @@ class AsyncTrayApp(QObject):
         self.tray_menu.addAction(act_exit)
 
         self.tray_icon.setContextMenu(self.tray_menu)
-
-    def _populate_audio_devices_menu(self):
-        """Populates the Audio Device submenu with Windows audio output endpoints."""
-        self.devices_menu.clear()
-        devices = self.audio.get_speaker_devices()
-        current_name = self.audio.get_clean_device_name()
-
-        group = QActionGroup(self)
-        group.setExclusive(True)
-
-        for dev in devices:
-            dev_name = dev["name"]
-            act = QAction(dev_name, self.devices_menu)
-            act.setCheckable(True)
-            if dev_name.lower() in current_name.lower() or current_name.lower() in dev_name.lower():
-                act.setChecked(True)
-            act.triggered.connect(lambda checked, dn=dev_name: self._select_audio_device(dn))
-            group.addAction(act)
-            self.devices_menu.addAction(act)
-
-        if self.control_panel:
-            self.control_panel.set_audio_devices(devices, current_name)
-
-    def _select_audio_device(self, dev_name: str):
-        self.audio.select_speaker_device(dev_name)
-        self.dsp.set_sample_rate(self.audio.sample_rate)
-        self.dsp.reset()
-        self._populate_audio_devices_menu()
-        if self.control_panel:
-            self.control_panel.set_audio_devices(self.speaker_devices_cache or self.audio.get_speaker_devices(), dev_name)
-            if self.control_panel.isVisible():
-                self.control_panel.show_confirmation(f"Audio: {dev_name}", 500)
 
     def _on_toggle_power(self, checked: bool):
         self.light_power = checked
@@ -648,7 +603,6 @@ class AsyncTrayApp(QObject):
             self.control_panel.colorChanged.connect(self._on_color_changed)
             self.control_panel.modeSelected.connect(self._on_mode_selected)
             self.control_panel.audioProfileSelected.connect(self._on_audio_profile_selected)
-            self.control_panel.deviceSelected.connect(self._select_audio_device)
             self.control_panel.brightnessChanged.connect(self._on_brightness_changed)
 
         if self.control_panel.isVisible():
@@ -669,10 +623,6 @@ class AsyncTrayApp(QObject):
             if hasattr(self.control_panel, "_set_audio_profile"):
                 self.control_panel._set_audio_profile(self.current_sync_mode)
 
-        self.control_panel.set_audio_devices(
-            self.speaker_devices_cache or self.audio.get_speaker_devices(),
-            self.audio.get_clean_device_name()
-        )
         self.control_panel.set_power_state(self.light_power)
         self.control_panel.header.set_connected_state(self.bulb.is_connected)
 
@@ -801,7 +751,6 @@ class AsyncTrayApp(QObject):
 
     def _engine_loop(self):
         """High-performance 60 FPS audio/screen capture & bulb transmission worker."""
-        speaker_devices_timer = 0.0
         stream_health_timer = 0.0
         last_track_key = ""
 
@@ -846,11 +795,6 @@ class AsyncTrayApp(QObject):
                 self.audio.check_stream_health()
                 stream_health_timer = now
 
-            if now - speaker_devices_timer >= 2.5 or self.devices_refresh_flag[0]:
-                self.speaker_devices_cache = self.audio.get_speaker_devices()
-                speaker_devices_timer = now
-                self.devices_refresh_flag[0] = False
-
             media_state = self.media.get_state()
             track_key = f"{media_state.get('title')}_{media_state.get('artist')}"
             send_thumb = (track_key != last_track_key)
@@ -873,7 +817,6 @@ class AsyncTrayApp(QObject):
                 "screen_sync": self.screen_sync.get_status(),
                 "source": self.audio.source_mode,
                 "source_name": self.audio.get_clean_device_name(),
-                "speaker_devices": self.speaker_devices_cache,
                 "bass_flash": {
                     "enabled": self.mapper.bass_flash_enabled,
                     "intensity": round(self.mapper.bass_flash_intensity, 2),

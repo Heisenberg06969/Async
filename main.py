@@ -87,9 +87,6 @@ def main():
         version=bulb_cfg.get("version", 3.3)
     )
 
-    devices_refresh_flag = [True]
-    speaker_devices_cache = []
-    speaker_devices_timer = 0.0
     stream_health_timer = 0.0
 
     # Initialize Web Room Simulator Server
@@ -130,15 +127,6 @@ def main():
                 audio.switch_source(new_source)
                 dsp.set_sample_rate(audio.sample_rate)
                 dsp.reset()
-                devices_refresh_flag[0] = True
-        elif action == "set_speaker_device":
-            device_target = cmd.get("device")
-            audio.select_speaker_device(device_target)
-            dsp.set_sample_rate(audio.sample_rate)
-            dsp.reset()
-            devices_refresh_flag[0] = True
-        elif action == "get_speaker_devices":
-            devices_refresh_flag[0] = True
         elif action == "set_bass_flash":
             mapper.set_bass_flash(cmd.get("enabled", True))
         elif action == "set_flash_intensity":
@@ -277,11 +265,6 @@ def main():
                 audio.check_stream_health()
                 stream_health_timer = now
 
-            if now - speaker_devices_timer >= 2.0 or devices_refresh_flag[0]:
-                speaker_devices_cache = audio.get_speaker_devices()
-                speaker_devices_timer = now
-                devices_refresh_flag[0] = False
-
             web_server.broadcast({
                 "rgb": rgb,
                 "hsv": [round(hsv[0], 1), round(hsv[1], 1), round(hsv[2], 1)],
@@ -298,7 +281,6 @@ def main():
                 "screen_sync": screen_sync.get_status(),
                 "source": audio.source_mode,
                 "source_name": audio.get_clean_device_name(),
-                "speaker_devices": speaker_devices_cache,
                 "bass_flash": {
                     "enabled": mapper.bass_flash_enabled,
                     "intensity": round(mapper.bass_flash_intensity, 2),

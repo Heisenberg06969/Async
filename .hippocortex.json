@@ -118,6 +118,20 @@
         "pyside6",
         "ux-refinement"
       ]
+    },
+    {
+      "id": "BUG-ASYNC-08",
+      "symptom": "Aggressive audio driver and endpoint switching code blocked laptop equalizer (FxSound) and shortcut hotkeys from switching audio output devices.",
+      "root_cause": "1. SoundVolumeView.exe was invoked to forcefully override Windows 11 default playback endpoints and redirect application sound. 2. A 2.5s periodic timer repeatedly opened PyAudio instances to enumerate WASAPI loopback devices. 3. Interactive audio device switcher UI in tray and GUI fought with system equalizer hotkeys.",
+      "solution_pattern": "Completely removed all audio driver switching code, SoundVolumeView binary tools, periodic device enumeration polling, and device selector UI. AudioCapture now strictly and passively listens to Windows default WASAPI loopback without interfering with external audio drivers or equalizer hotkeys.",
+      "tags": [
+        "audio-driver",
+        "wasapi",
+        "fxsound",
+        "non-intrusive",
+        "pyaudio",
+        "cleanup"
+      ]
     }
   ],
   "architectural_rules": [
@@ -133,7 +147,8 @@
     "Tuya 3.5 Protocol: Always split mode switch DP 21 and payload DP 24 into two consecutive calls to prevent hardware firmware packet drops.",
     "Invalidate hardware delta cache (last_white, last_hsv) immediately on mode transitions to guarantee initial frame transmission.",
     "Replace intrusive OS notifications with transient (500ms) in-GUI confirmation badges to keep desktop clean and avoid Windows Action Center clutter.",
-    "Enforce 100% pure ASCII text across all UI elements and notifications without emoji decorations."
+    "Enforce 100% pure ASCII text across all UI elements and notifications without emoji decorations.",
+    "Audio capture must be strictly passive: never modify, override, or lock Windows audio drivers or playback endpoints, and avoid polling device enumeration in loops."
   ],
   "dependencies": [
     "NumPy",

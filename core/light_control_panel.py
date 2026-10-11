@@ -871,7 +871,6 @@ class LightControlPanel(QDialog):
     """
     modeSelected = Signal(str)           # "solid", "audio", "screen_ambilight"
     audioProfileSelected = Signal(str)   # "bass_pulse", "rainbow_wave", "ambient_chill", "rave_strobe"
-    deviceSelected = Signal(str)         # selected Windows audio playback device
     powerToggled = Signal(bool)          # True / False
     whiteChanged = Signal(int, int)      # brightness (1..100), temperature (0..1000)
     colorChanged = Signal(int, int, int) # r, g, b
@@ -1073,30 +1072,8 @@ class LightControlPanel(QDialog):
         audio_info = QHBoxLayout()
         lbl_a_title = QLabel("LIVE FREQUENCY EQUALIZER", page_audio)
         lbl_a_title.setStyleSheet("color: #94A3B8; font-family: 'Segoe UI'; font-size: 10px; font-weight: 700; letter-spacing: 1px;")
-        self.btn_audio_device = QPushButton("Desktop Audio", page_audio)
-        self.btn_audio_device.setCursor(QCursor(Qt.PointingHandCursor))
-        self.btn_audio_device.setFixedHeight(22)
-        self.btn_audio_device.setStyleSheet("""
-            QPushButton {
-                background-color: rgba(56, 189, 248, 0.12);
-                color: #38BDF8;
-                border: 1px solid rgba(56, 189, 248, 0.30);
-                border-radius: 6px;
-                font-family: 'Segoe UI';
-                font-size: 10px;
-                font-weight: 600;
-                padding: 1px 8px;
-            }
-            QPushButton:hover {
-                background-color: rgba(56, 189, 248, 0.22);
-                border-color: #38BDF8;
-                color: #FFFFFF;
-            }
-        """)
-        self.btn_audio_device.clicked.connect(self._show_device_menu)
         audio_info.addWidget(lbl_a_title)
         audio_info.addStretch()
-        audio_info.addWidget(self.btn_audio_device)
         audio_layout.addLayout(audio_info)
 
         # 20-Band Live Audio Equalizer
@@ -1285,66 +1262,6 @@ class LightControlPanel(QDialog):
             self.modeSelected.emit("solid")
             self.whiteChanged.emit(self.current_brightness, raw_temp)
             self.show_confirmation("Palette: White Temperature", 500)
-
-    # ---------------- Audio Device Switching ----------------
-
-    def set_audio_devices(self, devices: List[Dict[str, Any]], current_device_name: str = ""):
-        """Updates the cached audio output devices and active device display."""
-        self._audio_devices = devices or []
-        if current_device_name:
-            self._current_device_name = current_device_name
-            display_name = current_device_name
-            if len(display_name) > 22:
-                display_name = display_name[:20] + ".."
-            self.btn_audio_device.setText(display_name)
-
-    def _show_device_menu(self):
-        """Displays popup menu to switch Windows audio output device directly."""
-        menu = QMenu(self)
-        menu.setStyleSheet("""
-            QMenu {
-                background-color: #12131C;
-                color: #E2E8F0;
-                border: 1px solid rgba(255, 255, 255, 0.12);
-                border-radius: 8px;
-                padding: 4px;
-                font-family: 'Segoe UI';
-                font-size: 11px;
-            }
-            QMenu::item {
-                padding: 5px 14px;
-                border-radius: 4px;
-            }
-            QMenu::item:selected {
-                background-color: #0284C7;
-                color: #FFFFFF;
-            }
-        """)
-        devices = getattr(self, "_audio_devices", [])
-        if not devices:
-            act = menu.addAction("No Audio Devices Found")
-            act.setEnabled(False)
-        else:
-            current_dn = getattr(self, "_current_device_name", "")
-            for dev in devices:
-                dev_name = dev.get("name", "Unknown")
-                act = menu.addAction(dev_name)
-                act.setCheckable(True)
-                if current_dn and (current_dn.lower() in dev_name.lower() or dev_name.lower() in current_dn.lower()):
-                    act.setChecked(True)
-                act.triggered.connect(lambda checked=False, dn=dev_name: self._on_device_selected(dn))
-
-        pos = self.btn_audio_device.mapToGlobal(QPoint(0, self.btn_audio_device.height() + 2))
-        menu.exec(pos)
-
-    def _on_device_selected(self, dev_name: str):
-        self._current_device_name = dev_name
-        display_name = dev_name
-        if len(display_name) > 22:
-            display_name = display_name[:20] + ".."
-        self.btn_audio_device.setText(display_name)
-        self.deviceSelected.emit(dev_name)
-        self.show_confirmation(f"Audio: {display_name}", 500)
 
     # ---------------- Color & White Callbacks ----------------
 
