@@ -84,6 +84,13 @@ def load_config() -> Dict[str, Any]:
         "visuals": {"mode": "bass_pulse", "bar_coloring": "bulb"}
     }
 
+def save_config(config: Dict[str, Any]):
+    try:
+        with open(CONFIG_FILE, "w", encoding="utf-8") as f:
+            json.dump(config, f, indent=2)
+    except Exception as e:
+        logger.error(f"Error saving config.json: {e}")
+
 def get_startup_vbs_path() -> Path:
     appdata = os.environ.get("APPDATA", "")
     return Path(appdata) / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Startup" / "Async.vbs"
@@ -183,13 +190,14 @@ class AsyncTrayApp(QObject):
         self.num_bands = audio_cfg.get("bands", 24)
         self.chunk_size = audio_cfg.get("chunk_size", 1024)
         self.gravity = audio_cfg.get("gravity", 0.82)
+        self.target_audio_device = audio_cfg.get("device", "Headphone")
         self.initial_mode = visuals_cfg.get("mode", "bass_pulse")
 
         # Hardware Light Power State
         self.light_power: bool = True
 
         # Initialize Core Engines
-        self.audio = AudioCapture(chunk_size=self.chunk_size)
+        self.audio = AudioCapture(chunk_size=self.chunk_size, target_device=self.target_audio_device)
         self.dsp = DSPEngine(num_bands=self.num_bands, chunk_size=self.chunk_size, gravity=self.gravity)
         self.mapper = ColorMapper(mode=self.initial_mode)
         self.screen_sync = ScreenSyncEngine(target_fps=30, smoothing=0.28, letterbox_crop=True, strobe_boost=True)
@@ -443,6 +451,21 @@ class AsyncTrayApp(QObject):
             algos_menu.addAction(act)
             self.algo_actions[a_key] = act
 
+        # 9. Audio Capture Driver Submenu (Passive Loopback Capture)
+        audio_dev_menu = self.tray_menu.addMenu("Audio Capture Driver")
+        self.audio_dev_group = QActionGroup(self)
+        self.audio_dev_group.setExclusive(True)
+        active_clean = self.audio.get_clean_device_name()
+        for dev in self.audio.get_loopback_devices():
+            clean = dev["clean_name"]
+            is_active = (clean == active_clean or clean in active_clean or active_clean in clean)
+            act = QAction(clean, audio_dev_menu)
+            act.setCheckable(True)
+            act.setChecked(is_active)
+            act.triggered.connect(lambda checked, d=clean: self._on_audio_device_selected(d))
+            self.audio_dev_group.addAction(act)
+            audio_dev_menu.addAction(act)
+
         self.tray_menu.addSeparator()
 
         # 10. Tray Icon Style Submenu
@@ -604,10 +627,17 @@ class AsyncTrayApp(QObject):
             self.control_panel.modeSelected.connect(self._on_mode_selected)
             self.control_panel.audioProfileSelected.connect(self._on_audio_profile_selected)
             self.control_panel.brightnessChanged.connect(self._on_brightness_changed)
+            self.control_panel.audioDeviceSelected.connect(self._on_audio_device_selected)
 
         if self.control_panel.isVisible():
             self.control_panel.hide()
             return
+
+        # Pass available audio endpoints to control panel
+        self.control_panel.set_audio_device_info(
+            self.audio.get_clean_device_name(),
+            self.audio.get_loopback_devices()
+        )
 
         # Synchronize UI state with current active app mode
         if self.current_sync_mode == "screen_ambilight":
@@ -633,6 +663,16 @@ class AsyncTrayApp(QObject):
         self.control_panel.show()
         self.control_panel.raise_()
         self.control_panel.activateWindow()
+
+    def _on_audio_device_selected(self, device_name: str):
+        logger.info(f"User selected audio capture device: {device_name}")
+        new_name = self.audio.set_capture_device(device_name)
+        self.dsp.set_sample_rate(self.audio.sample_rate)
+        self.config.setdefault("audio", {})["device"] = device_name
+        save_config(self.config)
+        if self.control_panel:
+            self.control_panel.set_audio_device_info(new_name, self.audio.get_loopback_devices())
+        self._build_tray_menu()
 
     def _on_toggle_ambilight_action(self, checked: bool):
         if checked:

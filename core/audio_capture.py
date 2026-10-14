@@ -9,7 +9,7 @@ Never modifies, overrides, or locks system audio drivers or default playback end
 import time
 import queue
 import logging
-from typing import Optional, Tuple
+from typing import Optional, Tuple, List
 import numpy as np
 import pyaudiowpatch as pyaudio
 
@@ -19,9 +19,10 @@ logger = logging.getLogger("Async.AudioCapture")
 class AudioCapture:
     SOURCES = ["speaker", "mic"]
 
-    def __init__(self, chunk_size: int = 1024, source_mode: str = "speaker"):
+    def __init__(self, chunk_size: int = 1024, source_mode: str = "speaker", target_device: Optional[str] = None):
         self.chunk_size = chunk_size
         self.source_mode = source_mode if source_mode in self.SOURCES else "speaker"
+        self.target_device_name: Optional[str] = target_device
         self.p: Optional[pyaudio.PyAudio] = None
         self.stream: Optional[pyaudio.Stream] = None
         self.audio_queue: queue.Queue = queue.Queue(maxsize=8)
@@ -31,8 +32,61 @@ class AudioCapture:
         self.sample_rate: int = 44100
         self.channels: int = 2
 
+    def get_loopback_devices(self) -> List[dict]:
+        """
+        Returns list of available WASAPI loopback output devices.
+        Never modifies Windows settings.
+        """
+        p_temp = self.p if self.p is not None else pyaudio.PyAudio()
+        devices = []
+        try:
+            try:
+                default_loop = p_temp.get_default_wasapi_loopback()
+                default_idx = default_loop["index"]
+            except Exception:
+                default_idx = -1
+
+            for dev in p_temp.get_loopback_device_info_generator():
+                clean_name = dev["name"].replace(" [Loopback]", "").strip()
+                devices.append({
+                    "name": dev["name"],
+                    "clean_name": clean_name,
+                    "index": dev["index"],
+                    "is_default": (dev["index"] == default_idx)
+                })
+        except Exception as e:
+            logger.error(f"Error enumerating loopback devices: {e}")
+        finally:
+            if self.p is None:
+                try:
+                    p_temp.terminate()
+                except Exception:
+                    pass
+        return devices
+
+    def set_capture_device(self, target: Optional[str]) -> str:
+        """
+        Passively switches PyAudio's capture loopback device without modifying
+        Windows system settings or default playback endpoints.
+        """
+        self.target_device_name = target
+        if self.is_running:
+            self.restart()
+        return self.get_clean_device_name()
+
     def _find_loopback_device(self) -> dict:
-        """Finds the system default WASAPI loopback device passively without modifying Windows audio settings."""
+        """Finds target or default WASAPI loopback device passively without modifying Windows audio settings."""
+        # 1. If explicit target device requested, search for match
+        if self.target_device_name:
+            target_lower = self.target_device_name.lower().strip()
+            loopback_devices = list(self.p.get_loopback_device_info_generator())
+            for dev in loopback_devices:
+                dev_clean = dev["name"].replace(" [Loopback]", "").lower()
+                if target_lower in dev_clean or dev_clean in target_lower:
+                    logger.info(f"Using explicitly targeted capture device: {dev['name']}")
+                    return dev
+
+        # 2. Otherwise fall back to system default loopback
         try:
             return self.p.get_default_wasapi_loopback()
         except Exception as e:

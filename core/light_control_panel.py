@@ -871,6 +871,7 @@ class LightControlPanel(QDialog):
     """
     modeSelected = Signal(str)           # "solid", "audio", "screen_ambilight"
     audioProfileSelected = Signal(str)   # "bass_pulse", "rainbow_wave", "ambient_chill", "rave_strobe"
+    audioDeviceSelected = Signal(str)    # name of audio loopback capture device
     powerToggled = Signal(bool)          # True / False
     whiteChanged = Signal(int, int)      # brightness (1..100), temperature (0..1000)
     colorChanged = Signal(int, int, int) # r, g, b
@@ -890,6 +891,8 @@ class LightControlPanel(QDialog):
         self.current_audio_profile: str = "bass_pulse"
         self.current_brightness: int = 100
         self.current_rgb: Tuple[int, int, int] = (56, 189, 248)
+        self.current_audio_device: str = "Default Loopback"
+        self.available_audio_devices: List[Dict[str, Any]] = []
 
         self._build_ui()
         self._apply_dark_theme()
@@ -1074,6 +1077,31 @@ class LightControlPanel(QDialog):
         lbl_a_title.setStyleSheet("color: #94A3B8; font-family: 'Segoe UI'; font-size: 10px; font-weight: 700; letter-spacing: 1px;")
         audio_info.addWidget(lbl_a_title)
         audio_info.addStretch()
+
+        # Capture Device Selector Pill
+        self.btn_audio_driver = QPushButton("Driver: Detecting...", page_audio)
+        self.btn_audio_driver.setCursor(QCursor(Qt.PointingHandCursor))
+        self.btn_audio_driver.setFixedHeight(22)
+        self.btn_audio_driver.setStyleSheet("""
+            QPushButton {
+                background-color: #1A1C29;
+                color: #38BDF8;
+                border: 1px solid rgba(56, 189, 248, 0.4);
+                border-radius: 6px;
+                font-family: 'Segoe UI';
+                font-size: 10px;
+                font-weight: 600;
+                padding: 0 8px;
+            }
+            QPushButton:hover {
+                background-color: #272A3D;
+                border-color: #38BDF8;
+                color: #FFFFFF;
+            }
+        """)
+        self.btn_audio_driver.clicked.connect(self._show_audio_driver_menu)
+        audio_info.addWidget(self.btn_audio_driver)
+
         audio_layout.addLayout(audio_info)
 
         # 20-Band Live Audio Equalizer
@@ -1393,3 +1421,58 @@ class LightControlPanel(QDialog):
             if rgb and len(rgb) == 3:
                 self.ambi_preview.set_rgb(rgb[0], rgb[1], rgb[2])
                 self.bright_slider.set_color(QColor(rgb[0], rgb[1], rgb[2]))
+
+    # ---------------- Audio Capture Device Selection ----------------
+
+    def set_audio_device_info(self, current_name: str, available_devices: List[Dict[str, Any]]):
+        """Updates available audio loopback devices and active capture device in the GUI."""
+        self.current_audio_device = current_name
+        self.available_audio_devices = available_devices
+        clean = current_name.replace(" [Loopback]", "").strip()
+        disp = clean if len(clean) <= 24 else clean[:22] + "..."
+        self.btn_audio_driver.setText(f"Driver: {disp}")
+
+    def _show_audio_driver_menu(self):
+        """Displays popup dropdown menu to pick WASAPI loopback capture device."""
+        if not hasattr(self, "available_audio_devices") or not self.available_audio_devices:
+            return
+
+        menu = QMenu(self)
+        menu.setStyleSheet("""
+            QMenu {
+                background-color: #0F1017;
+                border: 1px solid rgba(255, 255, 255, 0.12);
+                border-radius: 8px;
+                padding: 4px;
+            }
+            QMenu::item {
+                color: #CBD5E1;
+                font-family: 'Segoe UI';
+                font-size: 11px;
+                font-weight: 600;
+                padding: 6px 14px;
+                border-radius: 5px;
+            }
+            QMenu::item:selected {
+                background-color: #272A3D;
+                color: #38BDF8;
+            }
+        """)
+
+        for dev in self.available_audio_devices:
+            clean = dev.get("clean_name", dev.get("name", ""))
+            curr = getattr(self, "current_audio_device", "")
+            is_active = (clean == curr or clean in curr or curr in clean)
+            prefix = "[x] " if is_active else "    "
+            act = menu.addAction(f"{prefix}{clean}")
+            act.triggered.connect(lambda chk=False, d=clean: self._on_select_audio_device(d))
+
+        menu.exec(QCursor.pos())
+
+    def _on_select_audio_device(self, clean_name: str):
+        self.current_audio_device = clean_name
+        disp = clean_name if len(clean_name) <= 24 else clean_name[:22] + "..."
+        self.btn_audio_driver.setText(f"Driver: {disp}")
+        self.audioDeviceSelected.emit(clean_name)
+        self.show_confirmation(f"Capture: {disp}", 600)
+
