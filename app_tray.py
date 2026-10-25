@@ -81,7 +81,8 @@ def load_config() -> Dict[str, Any]:
             "version": 3.3
         },
         "audio": {"bands": 24, "chunk_size": 1024, "gravity": 0.82},
-        "visuals": {"mode": "bass_pulse", "bar_coloring": "bulb"}
+        "visuals": {"mode": "bass_pulse", "bar_coloring": "bulb"},
+        "screen_sync": {"monitor": "primary", "smoothing": 0.28, "letterbox_crop": True, "strobe_boost": True}
     }
 
 def save_config(config: Dict[str, Any]):
@@ -200,7 +201,14 @@ class AsyncTrayApp(QObject):
         self.audio = AudioCapture(chunk_size=self.chunk_size, target_device=self.target_audio_device)
         self.dsp = DSPEngine(num_bands=self.num_bands, chunk_size=self.chunk_size, gravity=self.gravity)
         self.mapper = ColorMapper(mode=self.initial_mode)
-        self.screen_sync = ScreenSyncEngine(target_fps=30, smoothing=0.28, letterbox_crop=True, strobe_boost=True)
+        screen_cfg = self.config.get("screen_sync", {})
+        self.screen_sync = ScreenSyncEngine(
+            target_fps=30,
+            smoothing=screen_cfg.get("smoothing", 0.28),
+            letterbox_crop=screen_cfg.get("letterbox_crop", True),
+            strobe_boost=screen_cfg.get("strobe_boost", True),
+            target_monitor=screen_cfg.get("monitor", "primary")
+        )
         self.media = WindowsMediaSession()
 
         self.bulb = HavellsLocalBulb(
@@ -346,6 +354,10 @@ class AsyncTrayApp(QObject):
             self.screen_sync.set_strobe_sensitivity(float(cmd.get("sensitivity", 0.16)))
         elif action == "set_strobe_floor":
             self.screen_sync.set_strobe_floor(float(cmd.get("floor", 0.26)))
+        elif action == "set_monitor":
+            target = cmd.get("monitor")
+            if target:
+                self._on_screen_monitor_selected(target)
         elif action == "media_play_pause":
             self.media.toggle_play_pause()
         elif action == "media_next":
@@ -465,6 +477,24 @@ class AsyncTrayApp(QObject):
             act.triggered.connect(lambda checked, d=clean: self._on_audio_device_selected(d))
             self.audio_dev_group.addAction(act)
             audio_dev_menu.addAction(act)
+
+        # 10. Monitor Capture Source Submenu (Ambilight Target Display)
+        monitor_menu = self.tray_menu.addMenu("Monitor Capture Source")
+        self.monitor_group = QActionGroup(self)
+        self.monitor_group.setExclusive(True)
+        active_target = str(self.screen_sync.target_monitor)
+        monitors = self.screen_sync.get_available_monitors()
+        for mon in monitors:
+            lbl = mon["display_label"]
+            name = mon["name"]
+            is_active = (active_target in (name, mon["model"], str(mon["index"])) or
+                         (active_target in ("primary", "default") and mon["is_primary"]))
+            act = QAction(lbl, monitor_menu)
+            act.setCheckable(True)
+            act.setChecked(is_active)
+            act.triggered.connect(lambda checked, m=name: self._on_screen_monitor_selected(m))
+            self.monitor_group.addAction(act)
+            monitor_menu.addAction(act)
 
         self.tray_menu.addSeparator()
 
@@ -628,6 +658,7 @@ class AsyncTrayApp(QObject):
             self.control_panel.audioProfileSelected.connect(self._on_audio_profile_selected)
             self.control_panel.brightnessChanged.connect(self._on_brightness_changed)
             self.control_panel.audioDeviceSelected.connect(self._on_audio_device_selected)
+            self.control_panel.monitorSelected.connect(self._on_screen_monitor_selected)
 
         if self.control_panel.isVisible():
             self.control_panel.hide()
@@ -637,6 +668,13 @@ class AsyncTrayApp(QObject):
         self.control_panel.set_audio_device_info(
             self.audio.get_clean_device_name(),
             self.audio.get_loopback_devices()
+        )
+
+        # Pass available monitors and active monitor to control panel
+        self.control_panel.screen_sync = self.screen_sync
+        self.control_panel.set_monitor_info(
+            getattr(self.screen_sync, "target_monitor", "primary"),
+            self.screen_sync.get_available_monitors()
         )
 
         # Synchronize UI state with current active app mode
@@ -672,6 +710,41 @@ class AsyncTrayApp(QObject):
         save_config(self.config)
         if self.control_panel:
             self.control_panel.set_audio_device_info(new_name, self.audio.get_loopback_devices())
+        self._build_tray_menu()
+
+    def _on_screen_monitor_selected(self, monitor_name: str):
+        logger.info(f"User selected screen capture monitor: {monitor_name}")
+        self.screen_sync.set_target_monitor(monitor_name)
+        self.config.setdefault("screen_sync", {})["monitor"] = monitor_name
+        save_config(self.config)
+
+        monitors = self.screen_sync.get_available_monitors()
+        clean_name = monitor_name
+        for mon in monitors:
+            if mon.get("name") == monitor_name or mon.get("display_label") == monitor_name or mon.get("model") == monitor_name:
+                if mon.get("model"):
+                    clean_name = mon["model"]
+                elif " (" in mon.get("display_label", ""):
+                    clean_name = mon["display_label"].split(" (")[0]
+                else:
+                    clean_name = mon.get("name") or monitor_name
+                break
+
+        if self.control_panel:
+            self.control_panel.set_monitor_info(self.screen_sync.target_monitor, monitors)
+            if self.control_panel.isVisible():
+                self.control_panel.show_confirmation(f"Monitor: {clean_name}", 500)
+
+        try:
+            self.tray_icon.showMessage(
+                "Async Monitor Capture",
+                f"Active Monitor: {clean_name}",
+                QSystemTrayIcon.Information,
+                1000
+            )
+        except Exception:
+            pass
+
         self._build_tray_menu()
 
     def _on_toggle_ambilight_action(self, checked: bool):

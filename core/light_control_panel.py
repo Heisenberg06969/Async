@@ -872,6 +872,7 @@ class LightControlPanel(QDialog):
     modeSelected = Signal(str)           # "solid", "audio", "screen_ambilight"
     audioProfileSelected = Signal(str)   # "bass_pulse", "rainbow_wave", "ambient_chill", "rave_strobe"
     audioDeviceSelected = Signal(str)    # name of audio loopback capture device
+    monitorSelected = Signal(str)        # name or label of screen capture monitor
     powerToggled = Signal(bool)          # True / False
     whiteChanged = Signal(int, int)      # brightness (1..100), temperature (0..1000)
     colorChanged = Signal(int, int, int) # r, g, b
@@ -893,6 +894,9 @@ class LightControlPanel(QDialog):
         self.current_rgb: Tuple[int, int, int] = (56, 189, 248)
         self.current_audio_device: str = "Default Loopback"
         self.available_audio_devices: List[Dict[str, Any]] = []
+        self.current_monitor: str = "primary"
+        self.available_monitors: List[Dict[str, Any]] = []
+        self.screen_sync = None
 
         self._build_ui()
         self._apply_dark_theme()
@@ -1142,11 +1146,32 @@ class LightControlPanel(QDialog):
         ambi_info = QHBoxLayout()
         lbl_am_title = QLabel("DESKTOP AMBILIGHT PROJECTION", page_ambi)
         lbl_am_title.setStyleSheet("color: #94A3B8; font-family: 'Segoe UI'; font-size: 10px; font-weight: 700; letter-spacing: 1px;")
-        lbl_am_fps = QLabel("30 FPS • REAL-TIME", page_ambi)
-        lbl_am_fps.setStyleSheet("color: #10B981; font-family: 'Segoe UI'; font-size: 10px; font-weight: 600;")
+
+        self.btn_monitor_selector = QPushButton("Monitor: Auto (Primary)", page_ambi)
+        self.btn_monitor_selector.setCursor(QCursor(Qt.PointingHandCursor))
+        self.btn_monitor_selector.setFixedHeight(22)
+        self.btn_monitor_selector.setStyleSheet("""
+            QPushButton {
+                background-color: #1E293B;
+                color: #38BDF8;
+                font-family: 'Segoe UI', system-ui;
+                font-size: 10px;
+                font-weight: 600;
+                padding: 2px 10px;
+                border: 1px solid rgba(56, 189, 248, 0.3);
+                border-radius: 4px;
+            }
+            QPushButton:hover {
+                background-color: #334155;
+                border: 1px solid #38BDF8;
+                color: #FFFFFF;
+            }
+        """)
+        self.btn_monitor_selector.clicked.connect(self._show_monitor_menu)
+
         ambi_info.addWidget(lbl_am_title)
         ambi_info.addStretch()
-        ambi_info.addWidget(lbl_am_fps)
+        ambi_info.addWidget(self.btn_monitor_selector)
         ambi_layout.addLayout(ambi_info)
 
         # Live Screen Silhouette Preview
@@ -1156,7 +1181,7 @@ class LightControlPanel(QDialog):
         # Ambilight Status Notes
         lbl_ambi_desc = QLabel(
             "Synchronizes Havells smart light directly with real-time edge colors "
-            "from your primary monitor for immersive cinema and gaming.",
+            "from your selected monitor for immersive cinema and gaming.",
             page_ambi
         )
         lbl_ambi_desc.setWordWrap(True)
@@ -1475,4 +1500,121 @@ class LightControlPanel(QDialog):
         self.btn_audio_driver.setText(f"Driver: {disp}")
         self.audioDeviceSelected.emit(clean_name)
         self.show_confirmation(f"Capture: {disp}", 600)
+
+    # ---------------- Monitor Capture Device Selection ----------------
+
+    def _show_toast(self, text: str, duration_ms: int = 500):
+        """Displays in-GUI confirmation badge (alias for show_confirmation)."""
+        self.show_confirmation(text, duration_ms)
+
+    def _get_clean_monitor_name(self, mon_identifier: str) -> str:
+        """Extracts concise clean monitor model/label for button display."""
+        if mon_identifier in ("primary", "auto", ""):
+            return "Auto (Primary)"
+        for mon in getattr(self, "available_monitors", []):
+            if mon.get("name") == mon_identifier or mon.get("display_label") == mon_identifier or mon.get("model") == mon_identifier:
+                if mon.get("model"):
+                    return mon["model"]
+                lbl = mon.get("display_label", "")
+                if " (" in lbl:
+                    return lbl.split(" (")[0]
+                return lbl or mon.get("name") or mon_identifier
+        return mon_identifier
+
+    def set_monitor_info(self, current_name: str, available_monitors: List[Dict[str, Any]]):
+        """Updates available monitors and active capture monitor in the GUI."""
+        self.current_monitor = current_name
+        self.available_monitors = available_monitors
+        clean = self._get_clean_monitor_name(current_name)
+        disp = clean if len(clean) <= 22 else clean[:20] + "..."
+        self.btn_monitor_selector.setText(f"Monitor: {disp}")
+
+    def _show_monitor_menu(self):
+        """Displays popup dropdown menu to pick display monitor for Ambilight sync."""
+        monitors = []
+        if hasattr(self, "screen_sync") and self.screen_sync and hasattr(self.screen_sync, "get_available_monitors"):
+            try:
+                monitors = self.screen_sync.get_available_monitors()
+            except Exception:
+                pass
+
+        if not monitors and hasattr(self, "available_monitors") and self.available_monitors:
+            monitors = self.available_monitors
+
+        if not monitors:
+            try:
+                from PySide6.QtGui import QGuiApplication
+                app = QGuiApplication.instance()
+                if app:
+                    primary = app.primaryScreen()
+                    for idx, scr in enumerate(app.screens()):
+                        geom = scr.geometry()
+                        is_prim = (scr == primary)
+                        model = scr.model() or f"Display {idx + 1}"
+                        monitors.append({
+                            "index": idx,
+                            "name": scr.name(),
+                            "model": model,
+                            "manufacturer": scr.manufacturer() or "",
+                            "geometry": (geom.x(), geom.y(), geom.width(), geom.height()),
+                            "refresh_rate": scr.refreshRate(),
+                            "is_primary": is_prim,
+                            "display_label": f"{model} ({geom.width()}x{geom.height()}){' [Primary]' if is_prim else ''}"
+                        })
+            except Exception:
+                pass
+
+        if not monitors:
+            return
+
+        menu = QMenu(self)
+        menu.setStyleSheet("""
+            QMenu {
+                background-color: #0F1017;
+                border: 1px solid rgba(255, 255, 255, 0.12);
+                border-radius: 8px;
+                padding: 4px;
+            }
+            QMenu::item {
+                color: #CBD5E1;
+                font-family: 'Segoe UI';
+                font-size: 11px;
+                font-weight: 600;
+                padding: 6px 14px;
+                border-radius: 5px;
+            }
+            QMenu::item:selected {
+                background-color: #272A3D;
+                color: #38BDF8;
+            }
+        """)
+
+        curr = getattr(self, "current_monitor", "primary")
+
+        for mon in monitors:
+            label = mon.get("display_label") or mon.get("name") or f"Display {mon.get('index', 0) + 1}"
+            raw_name = mon.get("name", label)
+            model = mon.get("model") or ""
+            is_active = False
+            if curr in ("primary", "auto", "") and mon.get("is_primary"):
+                is_active = True
+            elif curr and (curr == raw_name or curr == label or curr == model or curr in label):
+                is_active = True
+
+            prefix = "[x] " if is_active else "    "
+            clean_name = model if model else (label.split(" (")[0] if " (" in label else label)
+            act = menu.addAction(f"{prefix}{label}")
+            act.triggered.connect(lambda chk=False, m=raw_name, c=clean_name: self._on_monitor_selected(m, c))
+
+        menu.exec(QCursor.pos())
+
+    def _on_monitor_selected(self, mon_name: str, clean_name: str = ""):
+        self.current_monitor = mon_name
+        if not clean_name:
+            clean_name = self._get_clean_monitor_name(mon_name)
+        disp = clean_name if len(clean_name) <= 22 else clean_name[:20] + "..."
+        self.btn_monitor_selector.setText(f"Monitor: {disp}")
+        self.monitorSelected.emit(mon_name)
+        self._show_toast(f"Monitor Set: {disp}")
+
 

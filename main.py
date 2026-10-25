@@ -48,7 +48,8 @@ def load_config() -> Dict[str, Any]:
             "version": 3.3
         },
         "audio": {"bands": 24, "chunk_size": 1024, "gravity": 0.82},
-        "visuals": {"mode": "bass_pulse", "bar_coloring": "bulb"}
+        "visuals": {"mode": "bass_pulse", "bar_coloring": "bulb"},
+        "screen_sync": {"monitor": "primary", "smoothing": 0.28, "letterbox_crop": True, "strobe_boost": True}
     }
 
 BLOCK_CHARS = [" ", " ", "▂", "▃", "▄", "▅", "▆", "▇", "█"]
@@ -73,7 +74,14 @@ def main():
     audio = AudioCapture(chunk_size=chunk_size)
     dsp = DSPEngine(num_bands=num_bands, chunk_size=chunk_size, gravity=gravity)
     mapper = ColorMapper(mode=mode)
-    screen_sync = ScreenSyncEngine(target_fps=30, smoothing=0.28, letterbox_crop=True)
+    screen_cfg = config.get("screen_sync", {})
+    screen_sync = ScreenSyncEngine(
+        target_fps=30,
+        smoothing=screen_cfg.get("smoothing", 0.28),
+        letterbox_crop=screen_cfg.get("letterbox_crop", True),
+        strobe_boost=screen_cfg.get("strobe_boost", True),
+        target_monitor=screen_cfg.get("monitor", "primary")
+    )
     screen_sync.start()
     if mapper.mode == "screen_ambilight":
         screen_sync.enable()
@@ -100,6 +108,10 @@ def main():
                     screen_sync.enable()
                 else:
                     screen_sync.disable()
+        elif action == "set_monitor":
+            target = cmd.get("monitor")
+            if target:
+                screen_sync.set_target_monitor(target)
         elif action == "toggle_ambilight":
             is_on = mapper.toggle_ambilight()
             if is_on:
