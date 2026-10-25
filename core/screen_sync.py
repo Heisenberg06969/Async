@@ -334,8 +334,13 @@ class ScreenSyncEngine:
                 # Query exact screen geometry
                 geom = screen.geometry()
 
-                # Grab target monitor pixels using virtual desktop coordinates (supports negative coordinates)
-                pix = screen.grabWindow(0, geom.x(), geom.y(), geom.width(), geom.height())
+                # In Qt, coordinates for QScreen.grabWindow(0, x, y, w, h) are relative to the target screen.
+                # Passing (0, 0, geom.width(), geom.height()) captures the target screen's full native bounds.
+                # Do NOT pass geom.x() or geom.y() as Qt already offsets by screenGeometry.x()/y() internally on Windows;
+                # passing non-zero offsets causes negative/offscreen coordinates and fails to capture secondary monitors.
+                pix = screen.grabWindow(0, 0, 0, geom.width(), geom.height())
+                if pix.isNull():
+                    pix = screen.grabWindow(0)
                 if pix.isNull():
                     time.sleep(0.02)
                     continue
