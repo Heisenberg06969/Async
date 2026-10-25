@@ -735,16 +735,6 @@ class AsyncTrayApp(QObject):
             if self.control_panel.isVisible():
                 self.control_panel.show_confirmation(f"Monitor: {clean_name}", 500)
 
-        try:
-            self.tray_icon.showMessage(
-                "Async Monitor Capture",
-                f"Active Monitor: {clean_name}",
-                QSystemTrayIcon.Information,
-                1000
-            )
-        except Exception:
-            pass
-
         self._build_tray_menu()
 
     def _on_toggle_ambilight_action(self, checked: bool):
