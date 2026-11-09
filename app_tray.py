@@ -26,7 +26,8 @@ from PySide6.QtWidgets import (
     QApplication, QSystemTrayIcon, QMenu
 )
 from PySide6.QtGui import (
-    QIcon, QPixmap, QPainter, QColor, QPen, QBrush, QAction, QActionGroup, QFont
+    QIcon, QPixmap, QPainter, QColor, QPen, QBrush, QAction, QActionGroup, QFont,
+    QCursor, QGuiApplication
 )
 from PySide6.QtCore import Qt, QTimer, QObject, Signal
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
@@ -226,6 +227,7 @@ class AsyncTrayApp(QObject):
         self._lock = threading.Lock()
         self._is_running = True
         self.control_panel: Optional[LightControlPanel] = None
+        self._last_panel_open_time: float = 0.0
         self.current_sync_mode: str = self.initial_mode
         self.master_brightness: int = 100
 
@@ -277,7 +279,7 @@ class AsyncTrayApp(QObject):
             self.tray_icon.setIcon(initial_icon)
             self._current_tray_style = "orb"
 
-        self.tray_icon.setToolTip("Async 2.0: Room Lighting Sync\nLeft-click: Toggle Ambilight\nRight-click: Menu")
+        self.tray_icon.setToolTip("Async 2.0: Room Lighting Sync\nLeft-click: Light Control Panel\nRight-click: Menu")
 
         # Hook tray interactions
         self.tray_icon.activated.connect(self._on_tray_activated)
@@ -647,8 +649,9 @@ class AsyncTrayApp(QObject):
             self.control_panel.update_live_telemetry(bands, rgb)
             self.control_panel.header.set_connected_state(self.bulb.is_connected)
 
-    def show_control_panel(self):
+    def show_control_panel(self, force_show: bool = False):
         """Displays the sleek OLED Light Control Panel."""
+        now = time.time()
         if self.control_panel is None:
             self.control_panel = LightControlPanel()
             self.control_panel.powerToggled.connect(self._on_toggle_power)
@@ -661,8 +664,19 @@ class AsyncTrayApp(QObject):
             self.control_panel.monitorSelected.connect(self._on_screen_monitor_selected)
 
         if self.control_panel.isVisible():
+            if force_show:
+                self.control_panel.raise_()
+                self.control_panel.activateWindow()
+                return
+            # Debounce rapid clicking: if opened within the last 400ms, keep it open and raised
+            if now - self._last_panel_open_time < 0.4:
+                self.control_panel.raise_()
+                self.control_panel.activateWindow()
+                return
             self.control_panel.hide()
             return
+
+        self._last_panel_open_time = now
 
         # Pass available audio endpoints to control panel
         self.control_panel.set_audio_device_info(
@@ -694,9 +708,12 @@ class AsyncTrayApp(QObject):
         self.control_panel.set_power_state(self.light_power)
         self.control_panel.header.set_connected_state(self.bulb.is_connected)
 
-        screen = QApplication.primaryScreen().availableGeometry()
-        x = max(10, screen.right() - self.control_panel.width() - 16)
-        y = max(10, screen.bottom() - self.control_panel.height() - 16)
+        # Multi-monitor aware positioning: place panel on screen where user clicked
+        cursor_pos = QCursor.pos()
+        screen = QGuiApplication.screenAt(cursor_pos) or QGuiApplication.primaryScreen()
+        avail = screen.availableGeometry() if screen else QApplication.primaryScreen().availableGeometry()
+        x = max(avail.left() + 10, avail.right() - self.control_panel.width() - 16)
+        y = max(avail.top() + 10, avail.bottom() - self.control_panel.height() - 16)
         self.control_panel.move(x, y)
         self.control_panel.show()
         self.control_panel.raise_()
@@ -846,11 +863,11 @@ class AsyncTrayApp(QObject):
     def _on_tray_activated(self, reason):
         """Handles mouse clicks on the system tray icon."""
         if reason == QSystemTrayIcon.Trigger:
-            # Single Left-Click: Open or toggle Light Control Panel
+            # Single Left-Click: Toggle or show Light Control Panel
             self.show_control_panel()
         elif reason == QSystemTrayIcon.DoubleClick:
-            # Double Click: Open Room Simulator Dashboard
-            self._open_web_simulator()
+            # Double Click: Always ensure Light Control Panel is brought to front
+            self.show_control_panel(force_show=True)
 
     def _engine_loop(self):
         """High-performance 60 FPS audio/screen capture & bulb transmission worker."""

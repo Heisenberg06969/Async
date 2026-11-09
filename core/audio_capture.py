@@ -31,12 +31,18 @@ class AudioCapture:
         self.device_info: Optional[dict] = None
         self.sample_rate: int = 44100
         self.channels: int = 2
+        self._cached_loopback_devices: List[dict] = []
+        self._last_device_scan: float = 0.0
 
-    def get_loopback_devices(self) -> List[dict]:
+    def get_loopback_devices(self, force_refresh: bool = False) -> List[dict]:
         """
         Returns list of available WASAPI loopback output devices.
-        Never modifies Windows settings.
+        Never modifies Windows settings. Caches results for 5 seconds to prevent GUI thread stalls.
         """
+        now = time.time()
+        if not force_refresh and self._cached_loopback_devices and (now - self._last_device_scan < 5.0):
+            return self._cached_loopback_devices
+
         p_temp = self.p if self.p is not None else pyaudio.PyAudio()
         devices = []
         try:
@@ -54,6 +60,8 @@ class AudioCapture:
                     "index": dev["index"],
                     "is_default": (dev["index"] == default_idx)
                 })
+            self._cached_loopback_devices = devices
+            self._last_device_scan = now
         except Exception as e:
             logger.error(f"Error enumerating loopback devices: {e}")
         finally:

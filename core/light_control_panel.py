@@ -881,7 +881,7 @@ class LightControlPanel(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Async Light Controller")
-        self.setWindowFlags(Qt.Window | Qt.FramelessWindowHint)
+        self.setWindowFlags(Qt.Window | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setFixedSize(410, 520)
 
