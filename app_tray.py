@@ -258,6 +258,10 @@ class AsyncTrayApp(QObject):
         # Tray Icon Style: Default to official brand logo
         self.icon_style = "brand"  # "brand" or "orb"
         self._current_tray_style = None
+        self._last_tooltip: str = ""
+        self._last_status_text: str = ""
+        self._last_tooltip_time: float = 0.0
+        self._last_orb_key: Optional[tuple] = None
 
         self.brand_icon_path = Path(__file__).parent / "assets" / "icon.ico"
         if not self.brand_icon_path.exists():
@@ -279,15 +283,19 @@ class AsyncTrayApp(QObject):
             self.tray_icon.setIcon(initial_icon)
             self._current_tray_style = "orb"
 
-        self.tray_icon.setToolTip("Async 2.0: Room Lighting Sync\nLeft-click: Light Control Panel\nRight-click: Menu")
+        self._last_tooltip = "Async 2.0: Room Lighting Sync\nLeft-click: Light Control Panel\nRight-click: Menu"
+        self.tray_icon.setToolTip(self._last_tooltip)
 
         # Hook tray interactions
         self.tray_icon.activated.connect(self._on_tray_activated)
         self.tray_icon.show()
 
-        # UI Refresh Timer (Refreshes icon glow and status tooltip at 10 FPS)
+        # Pre-warm Light Control Panel in background memory so first tray click is instant
+        self._ensure_control_panel()
+
+        # UI Refresh Timer (Refreshes icon glow and status cleanly without spamming Windows Shell IPC)
         self.ui_timer = QTimer(self)
-        self.ui_timer.setInterval(100)
+        self.ui_timer.setInterval(200)
         self.ui_timer.timeout.connect(self._refresh_tray_state)
         self.ui_timer.start()
 
@@ -370,6 +378,7 @@ class AsyncTrayApp(QObject):
     def _build_tray_menu(self):
         """Constructs the native Windows right-click tray menu (100% emoji-free)."""
         self.tray_menu.clear()
+        self._last_status_text = ""
 
         # 1. Status Header
         self.act_status = QAction("Async 2.0 (Connecting...)", self.tray_menu)
@@ -383,7 +392,7 @@ class AsyncTrayApp(QObject):
 
         # 2. Open Light Controls (White Chart, Color Chart, Power ON/OFF)
         act_open_controls = QAction("Color & White Controls...", self.tray_menu)
-        act_open_controls.triggered.connect(self.show_control_panel)
+        act_open_controls.triggered.connect(lambda: self.show_control_panel(force_show=True))
         font_ctrl = QFont()
         font_ctrl.setBold(True)
         act_open_controls.setFont(font_ctrl)
@@ -649,9 +658,8 @@ class AsyncTrayApp(QObject):
             self.control_panel.update_live_telemetry(bands, rgb)
             self.control_panel.header.set_connected_state(self.bulb.is_connected)
 
-    def show_control_panel(self, force_show: bool = False):
-        """Displays the sleek OLED Light Control Panel."""
-        now = time.time()
+    def _ensure_control_panel(self):
+        """Constructs the Light Control Panel once cleanly on the Qt GUI thread."""
         if self.control_panel is None:
             self.control_panel = LightControlPanel()
             self.control_panel.powerToggled.connect(self._on_toggle_power)
@@ -663,22 +671,27 @@ class AsyncTrayApp(QObject):
             self.control_panel.audioDeviceSelected.connect(self._on_audio_device_selected)
             self.control_panel.monitorSelected.connect(self._on_screen_monitor_selected)
 
+    def show_control_panel(self, force_show: bool = False):
+        """Displays the sleek OLED Light Control Panel instantaneously."""
+        t0 = time.time()
+        self._ensure_control_panel()
+
         if self.control_panel.isVisible():
             if force_show:
                 self.control_panel.raise_()
                 self.control_panel.activateWindow()
                 return
             # Debounce rapid clicking: if opened within the last 400ms, keep it open and raised
-            if now - self._last_panel_open_time < 0.4:
+            if t0 - self._last_panel_open_time < 0.4:
                 self.control_panel.raise_()
                 self.control_panel.activateWindow()
                 return
             self.control_panel.hide()
             return
 
-        self._last_panel_open_time = now
+        self._last_panel_open_time = t0
 
-        # Pass available audio endpoints to control panel
+        # Non-blocking cached audio endpoints (<0.1ms; refreshes async in background if stale)
         self.control_panel.set_audio_device_info(
             self.audio.get_clean_device_name(),
             self.audio.get_loopback_devices()
@@ -718,6 +731,7 @@ class AsyncTrayApp(QObject):
         self.control_panel.show()
         self.control_panel.raise_()
         self.control_panel.activateWindow()
+        logger.info(f"Control panel shown in {(time.time() - t0) * 1000:.1f}ms")
 
     def _on_audio_device_selected(self, device_name: str):
         logger.info(f"User selected audio capture device: {device_name}")
@@ -987,29 +1001,41 @@ class AsyncTrayApp(QObject):
                 if self.brand_icon and not self.brand_icon.isNull():
                     self.tray_icon.setIcon(self.brand_icon)
                 self._current_tray_style = "brand"
+                self._last_orb_key = None
         else:
-            icon = create_orb_icon(r, g, b, is_connected, is_strobe, self.light_power)
-            self.tray_icon.setIcon(icon)
+            orb_key = (r >> 2, g >> 2, b >> 2, is_connected, is_strobe, self.light_power)
+            if orb_key != self._last_orb_key:
+                icon = create_orb_icon(r, g, b, is_connected, is_strobe, self.light_power)
+                self.tray_icon.setIcon(icon)
+                self._last_orb_key = orb_key
             self._current_tray_style = "orb"
 
-        # Status action in menu
+        # Status action in menu (update only when text changes)
         if self.bulb.dry_run:
             status_text = "Async 2.0 (Preview / Dry-Run)"
         elif is_connected:
             status_text = f"Bulb Connected ({ping:.0f}ms | {pps:.1f} pps)"
         else:
             status_text = f"Bulb Reconnecting (#{self.bulb.reconnect_count})..."
-        self.act_status.setText(status_text)
+        if status_text != self._last_status_text:
+            self.act_status.setText(status_text)
+            self._last_status_text = status_text
 
-        # Update Tooltip
-        mode_label = "Screen Ambilight" if mode_name == "screen_ambilight" else mode_name.replace('_', ' ').title()
-        strobe_str = " | Strobe Active" if is_strobe else ""
-        self.tray_icon.setToolTip(
-            f"Async 2.0\n"
-            f"Mode: {mode_label}{strobe_str}\n"
-            f"Bulb: {'Connected' if is_connected else 'Offline'} ({ping:.0f}ms)\n"
-            f"Left-Click: Light Controls | Right-Click: Menu"
-        )
+        # Update Tooltip ONLY when changed and throttled (>= 3.0s) to avoid flooding Windows Shell IPC
+        now = time.time()
+        if now - self._last_tooltip_time >= 3.0:
+            mode_label = "Screen Ambilight" if mode_name == "screen_ambilight" else mode_name.replace('_', ' ').title()
+            strobe_str = " | Strobe Active" if is_strobe else ""
+            tooltip_text = (
+                f"Async 2.0\n"
+                f"Mode: {mode_label}{strobe_str}\n"
+                f"Bulb: {'Connected' if is_connected else 'Offline'}\n"
+                f"Left-Click: Light Controls | Right-Click: Menu"
+            )
+            if tooltip_text != self._last_tooltip:
+                self.tray_icon.setToolTip(tooltip_text)
+                self._last_tooltip = tooltip_text
+            self._last_tooltip_time = now
 
         # Sync menu checkmarks if changed from web UI
         if self.act_ambilight.isChecked() != (mode_name == "screen_ambilight"):

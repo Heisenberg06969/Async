@@ -9,7 +9,8 @@ Never modifies, overrides, or locks system audio drivers or default playback end
 import time
 import queue
 import logging
-from typing import Optional, Tuple, List
+import threading
+from typing import Optional, Tuple, List, Callable
 import numpy as np
 import pyaudiowpatch as pyaudio
 
@@ -31,46 +32,83 @@ class AudioCapture:
         self.device_info: Optional[dict] = None
         self.sample_rate: int = 44100
         self.channels: int = 2
+        self._dev_lock = threading.Lock()
         self._cached_loopback_devices: List[dict] = []
         self._last_device_scan: float = 0.0
+        self._is_scanning: bool = False
+
+    def _scan_devices_with_instance(self, p_inst: pyaudio.PyAudio) -> List[dict]:
+        """Enumerates WASAPI loopback devices using an existing PyAudio instance."""
+        devices = []
+        try:
+            default_loop = p_inst.get_default_wasapi_loopback()
+            default_idx = default_loop["index"]
+        except Exception:
+            default_idx = -1
+
+        for dev in p_inst.get_loopback_device_info_generator():
+            clean_name = dev["name"].replace(" [Loopback]", "").strip()
+            devices.append({
+                "name": dev["name"],
+                "clean_name": clean_name,
+                "index": dev["index"],
+                "is_default": (dev["index"] == default_idx)
+            })
+        return devices
+
+    def _scan_loopback_worker(self, on_complete: Optional[Callable[[List[dict]], None]] = None):
+        """Background daemon worker to enumerate audio devices without blocking the Qt GUI thread."""
+        p_scan = None
+        devices = []
+        try:
+            p_scan = pyaudio.PyAudio()
+            devices = self._scan_devices_with_instance(p_scan)
+            with self._dev_lock:
+                self._cached_loopback_devices = devices
+                self._last_device_scan = time.time()
+        except Exception as e:
+            logger.error(f"Error in async loopback device scan: {e}")
+        finally:
+            if p_scan is not None:
+                try:
+                    p_scan.terminate()
+                except Exception:
+                    pass
+            with self._dev_lock:
+                self._is_scanning = False
+            if on_complete is not None and devices:
+                try:
+                    on_complete(devices)
+                except Exception:
+                    pass
+
+    def refresh_loopback_devices_async(self, on_complete: Optional[Callable[[List[dict]], None]] = None):
+        """Triggers a non-blocking background scan of available loopback devices."""
+        with self._dev_lock:
+            if self._is_scanning:
+                return
+            self._is_scanning = True
+        t = threading.Thread(
+            target=self._scan_loopback_worker,
+            args=(on_complete,),
+            name="AudioDeviceScanner",
+            daemon=True
+        )
+        t.start()
 
     def get_loopback_devices(self, force_refresh: bool = False) -> List[dict]:
         """
-        Returns list of available WASAPI loopback output devices.
-        Never modifies Windows settings. Caches results for 5 seconds to prevent GUI thread stalls.
+        Returns cached list of available WASAPI loopback output devices immediately (<0.1ms).
+        Never blocks the GUI thread with synchronous PortAudio COM calls.
+        If the cache is empty or stale, kicks off a background refresh asynchronously.
         """
         now = time.time()
-        if not force_refresh and self._cached_loopback_devices and (now - self._last_device_scan < 5.0):
-            return self._cached_loopback_devices
-
-        p_temp = self.p if self.p is not None else pyaudio.PyAudio()
-        devices = []
-        try:
-            try:
-                default_loop = p_temp.get_default_wasapi_loopback()
-                default_idx = default_loop["index"]
-            except Exception:
-                default_idx = -1
-
-            for dev in p_temp.get_loopback_device_info_generator():
-                clean_name = dev["name"].replace(" [Loopback]", "").strip()
-                devices.append({
-                    "name": dev["name"],
-                    "clean_name": clean_name,
-                    "index": dev["index"],
-                    "is_default": (dev["index"] == default_idx)
-                })
-            self._cached_loopback_devices = devices
-            self._last_device_scan = now
-        except Exception as e:
-            logger.error(f"Error enumerating loopback devices: {e}")
-        finally:
-            if self.p is None:
-                try:
-                    p_temp.terminate()
-                except Exception:
-                    pass
-        return devices
+        with self._dev_lock:
+            cached = list(self._cached_loopback_devices)
+            stale = (now - self._last_device_scan >= 10.0)
+        if force_refresh or not cached or stale:
+            self.refresh_loopback_devices_async()
+        return cached
 
     def set_capture_device(self, target: Optional[str]) -> str:
         """
@@ -179,6 +217,15 @@ class AudioCapture:
         )
         self.stream.start_stream()
         self.is_running = True
+
+        # Warm the loopback device cache immediately using our initialized PyAudio instance
+        try:
+            devices = self._scan_devices_with_instance(self.p)
+            with self._dev_lock:
+                self._cached_loopback_devices = devices
+                self._last_device_scan = time.time()
+        except Exception:
+            pass
 
     def switch_source(self, mode: str) -> Tuple[str, str, int]:
         """

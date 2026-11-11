@@ -81,7 +81,7 @@ class ConfirmationToast(QLabel):
             QLabel {
                 background-color: #0F172A;
                 color: #38BDF8;
-                font-family: 'Segoe UI', system-ui, sans-serif;
+                font-family: 'Segoe UI';
                 font-size: 11px;
                 font-weight: 700;
                 letter-spacing: 0.5px;
@@ -113,7 +113,7 @@ class HeaderBar(QWidget):
         self.lbl_title = QLabel("ASYNC", self)
         self.lbl_title.setStyleSheet("""
             color: #F8FAFC;
-            font-family: 'Segoe UI', system-ui;
+            font-family: 'Segoe UI';
             font-size: 13px;
             font-weight: 800;
             letter-spacing: 2px;
@@ -1154,7 +1154,7 @@ class LightControlPanel(QDialog):
             QPushButton {
                 background-color: #1E293B;
                 color: #38BDF8;
-                font-family: 'Segoe UI', system-ui;
+                font-family: 'Segoe UI';
                 font-size: 10px;
                 font-weight: 600;
                 padding: 2px 10px;
